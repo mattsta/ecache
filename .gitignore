@@ -1,0 +1,4 @@
+ebin/
+tags
+.eunit/
+*.beam

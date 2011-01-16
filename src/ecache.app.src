@@ -1,0 +1,12 @@
+{application, ecache,
+ [
+  {description, "ecache - Erlang ETS Based Cache"},
+  {vsn, "0.3.0"},
+  {modules, []},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib
+                 ]},
+  {env, []}
+ ]}.
