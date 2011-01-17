@@ -223,6 +223,8 @@ reap_after(EtsIndex, Key, LifeTTL) ->
     LifeTTL -> ets:delete(EtsIndex, Key)
   end.
 
+launch_datum_ttl_reaper(_, _, #datum{remaining_ttl = unlimited} = Datum) ->
+  Datum;
 launch_datum_ttl_reaper(EtsIndex, Key, #datum{remaining_ttl = TTL} = Datum) ->
   Reaper = spawn_link(fun() -> reap_after(EtsIndex, Key, TTL) end),
   Datum#datum{ttl_reaper = Reaper}.
@@ -259,6 +261,14 @@ launch_memoize_datum(Key, EtsIndex, Module, Accessor, TTL, CachePolicy) ->
 -compile({inline, [{data_from_datum, 1}]}).
 data_from_datum(#datum{data = Data}) -> Data.
 
+-compile({inline, [{ping_reaper, 2}]}).
+ping_reaper(Reaper, NewTTL) when is_pid(Reaper) ->
+  Reaper ! {update_ttl, NewTTL};
+ping_reaper(_, _) -> ok.
+
+update_ttl(DatumIndex, #datum{key = Key, ttl = unlimited}) ->
+  NewNow = {#datum.last_active, now()},
+  ets:update_element(DatumIndex, Key, NewNow);
 update_ttl(DatumIndex, #datum{key = Key, started = Started, ttl = TTL,
                   type = actual_time, ttl_reaper = Reaper}) ->
   % Get total time in seconds this datum has been running.  Convert to ms.
@@ -270,12 +280,13 @@ update_ttl(DatumIndex, #datum{key = Key, started = Started, ttl = TTL,
                    StartedNowDiff < TTL -> TTL - StartedNowDiff;
                                    true -> 0
                  end,
-  Reaper ! {update_ttl, TTLRemaining},
+
+  ping_reaper(Reaper, TTLRemaining),
   NewNowTTL = [{#datum.last_active, now()},
                {#datum.remaining_ttl, TTLRemaining}],
   ets:update_element(DatumIndex, Key, NewNowTTL);
 update_ttl(DatumIndex, #datum{key = Key, ttl = TTL, ttl_reaper = Reaper}) ->
-  Reaper ! {update_ttl, TTL},
+  ping_reaper(Reaper, TTL),
   ets:update_element(DatumIndex, Key, {#datum.last_active, now()}).
 
 fetch_data(Key, #cache{datum_index = DatumIndex}) when is_tuple(Key) ->
