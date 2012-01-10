@@ -13,6 +13,7 @@ The cache server is designed to memoize a specific Module:Fun. The key in
 a cache is the Argument passed to Module:Fun/1.
 
 Start a cache:
+
         CacheName = my_cache,
         M = database,
         F = get_result,
@@ -26,6 +27,7 @@ The entry timer resets to the TTL every time an item is read.  You need to dirty
 the result of M:F(Key) will change from what is in the cache.
 
 Use a cache:
+
         Result = ecache:get(my_cache, <<"bob">>).
         ecache:dirty(my_cache, <<"bob">>, <<"newvalue">>).  % replace entry for <<"bob">>
         ecache:dirty(my_cache, <<"bob">>).  % remove entry from cache
@@ -34,6 +36,7 @@ Use a cache:
         RandomKeys = ecache:rand_keys(my_cache, 12).
 
 Bonus feature: use arbitrary M:F/1 calls in a cache:
+
         Result = ecache:memoize(my_cache, OtherMod, OtherFun, Arg).
         ecache:dirty_memoize(my_cache, OtherMod, OtherFun, Arg).  % remove entry from cache
 
@@ -41,6 +44,7 @@ Bonus feature: use arbitrary M:F/1 calls in a cache:
 Your root cache Mod:Fun could be nonsense if you want to use `ecache:memoize/4` everywhere.
 
 Short-hand to make a supervisor entry:
+
        SupervisorWorkerTuple = ecache:cache_sup(Name, M, F, Size).
 
 For more examples, see https://github.com/mattsta/ecache/blob/master/test/ecache_tests.erl
