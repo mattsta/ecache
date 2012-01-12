@@ -5,6 +5,7 @@
          rand/2, rand_keys/2]).
 
 -export([memoize/4, dirty_memoize/4]).
+-define(TIMEOUT, infinity).
 
 %% ===================================================================
 %% Supervisory helpers
@@ -25,13 +26,15 @@ cache_ttl_sup(Name, Mod, Fun, Size, TTL) ->
 %% ===================================================================
 
 get(ServerName, Key) ->
-  gen_server:call(ServerName, {get, Key}).
+  gen_server:call(ServerName, {get, Key}, ?TIMEOUT).
 
 memoize(MemoizeCacheServer, Module, Fun, Key) ->
-  gen_server:call(MemoizeCacheServer, {generic_get, Module, Fun, Key}).
+  gen_server:call(MemoizeCacheServer, {generic_get, Module, Fun, Key},
+    ?TIMEOUT).
 
 dirty_memoize(MemoizeCacheServer, Module, Fun, Key) ->
-  gen_server:cast(MemoizeCacheServer, {generic_dirty, Module, Fun, Key}).
+  gen_server:cast(MemoizeCacheServer, {generic_dirty, Module, Fun, Key},
+    ?TIMEOUT).
 
 empty(RegisteredCacheServerName) ->
   gen_server:call(RegisteredCacheServerName, empty).
