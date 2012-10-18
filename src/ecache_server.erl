@@ -220,7 +220,8 @@ reap_after(EtsIndex, Key, LifeTTL) ->
   receive
     {update_ttl, NewTTL} -> reap_after(EtsIndex, Key, NewTTL)
   after
-    LifeTTL -> ets:delete(EtsIndex, Key)
+    LifeTTL -> ets:delete(EtsIndex, Key),
+               exit(self(), kill)
   end.
 
 launch_datum_ttl_reaper(_, _, #datum{remaining_ttl = unlimited} = Datum) ->
