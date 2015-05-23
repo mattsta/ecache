@@ -243,7 +243,7 @@ launch_datum(Key, EtsIndex, Module, Accessor, TTL, CachePolicy) ->
                  ets:insert(EtsIndex, LaunchedDatum),
                  CacheData
   catch
-    How:What -> datum_error(How, What)
+    How:What -> datum_error({How, What}, erlang:get_stacktrace())
   end.
 
 launch_memoize_datum(Key, EtsIndex, Module, Accessor, TTL, CachePolicy) ->
@@ -255,7 +255,7 @@ launch_memoize_datum(Key, EtsIndex, Module, Accessor, TTL, CachePolicy) ->
                  ets:insert(EtsIndex, LaunchedDatum),
                  CacheData
   catch
-    How:What -> datum_error(How, What)
+    How:What -> datum_error({How, What}, erlang:get_stacktrace())
   end.
 
 
