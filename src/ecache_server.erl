@@ -128,7 +128,7 @@ handle_call(reap_oldest, _From, #cache{datum_index = DatumIndex} = State) ->
     ets:foldl(fun(A, Acc) when A#datum.last_active < Acc -> A;
                  (_, Acc) -> Acc
               end,
-              now(),
+              os:timestamp(),
               DatumIndex),
   ets:delete(DatumIndex, LeastActive),
   {from, ok, State};
@@ -212,9 +212,9 @@ unkey({ecache_multi, {M, F, A}}) -> {M, F, A}.
 
 -compile({inline, [{create_datum, 4}]}).
 create_datum(DatumKey, Data, TTL, Type) ->
-  #datum{key = DatumKey, data = Data, started = now(),
+  #datum{key = DatumKey, data = Data, started = os:timestamp(),
          ttl = TTL, remaining_ttl = TTL, type = Type,
-         last_active = now()}.
+         last_active = os:timestamp()}.
 
 reap_after(EtsIndex, Key, LifeTTL) ->
   receive
@@ -268,13 +268,12 @@ ping_reaper(Reaper, NewTTL) when is_pid(Reaper) ->
 ping_reaper(_, _) -> ok.
 
 update_ttl(DatumIndex, #datum{key = Key, ttl = unlimited}) ->
-  NewNow = {#datum.last_active, now()},
+  NewNow = {#datum.last_active, os:timestamp()},
   ets:update_element(DatumIndex, Key, NewNow);
 update_ttl(DatumIndex, #datum{key = Key, started = Started, ttl = TTL,
                   type = actual_time, ttl_reaper = Reaper}) ->
   % Get total time in seconds this datum has been running.  Convert to ms.
-  StartedNowDiff = (calendar:time_to_seconds(now()) - 
-                    calendar:time_to_seconds(Started)) * 1000,
+  StartedNowDiff = timer:now_diff(os:timestamp(), Started) div 1000,
   % If we are less than the TTL, update with TTL-used (TTL in ms too)
   % else, we ran out of time.  expire on next loop.
   TTLRemaining = if
@@ -283,12 +282,12 @@ update_ttl(DatumIndex, #datum{key = Key, started = Started, ttl = TTL,
                  end,
 
   ping_reaper(Reaper, TTLRemaining),
-  NewNowTTL = [{#datum.last_active, now()},
+  NewNowTTL = [{#datum.last_active, os:timestamp()},
                {#datum.remaining_ttl, TTLRemaining}],
   ets:update_element(DatumIndex, Key, NewNowTTL);
 update_ttl(DatumIndex, #datum{key = Key, ttl = TTL, ttl_reaper = Reaper}) ->
   ping_reaper(Reaper, TTL),
-  ets:update_element(DatumIndex, Key, {#datum.last_active, now()}).
+  ets:update_element(DatumIndex, Key, {#datum.last_active, os:timestamp()}).
 
 fetch_data(Key, #cache{datum_index = DatumIndex}) when is_tuple(Key) ->
   case ets:lookup(DatumIndex, Key) of
@@ -298,7 +297,7 @@ fetch_data(Key, #cache{datum_index = DatumIndex}) when is_tuple(Key) ->
   end.
 
 replace_datum(Key, Data, #cache{datum_index = DatumIndex}) when is_tuple(Key) ->
-  NewDataActive = [{#datum.data, Data}, {#datum.last_active, now()}],
+  NewDataActive = [{#datum.data, Data}, {#datum.last_active, os:timestamp()}],
   ets:update_element(DatumIndex, Key, NewDataActive),
   Data.
 
