@@ -273,7 +273,7 @@ update_ttl(DatumIndex, #datum{key = Key, ttl = unlimited}) ->
 update_ttl(DatumIndex, #datum{key = Key, started = Started, ttl = TTL,
                   type = actual_time, ttl_reaper = Reaper}) ->
   % Get total time in seconds this datum has been running.  Convert to ms.
-  StartedNowDiff = (calendar:time_to_seconds(os:timestamp()) - calendar:time_to_seconds(Started)) * 1000,
+  StartedNowDiff = timer:now_diff(os:timestamp(), Started) div 1000,
   % If we are less than the TTL, update with TTL-used (TTL in ms too)
   % else, we ran out of time.  expire on next loop.
   TTLRemaining = if
