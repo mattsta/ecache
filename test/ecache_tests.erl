@@ -25,6 +25,12 @@ memoize_tester(Key) when is_binary(Key) orelse is_list(Key) ->
 count(Properties) ->
   proplists:get_value(datum_count, Properties).
 
+empty_table_size() ->
+    T = ets:new(ecache_test, [set, private]),
+    S = ets:info(T, memory) * erlang:system_info(wordsize),
+    true = ets:delete(T),
+    S.
+
 ecache_test_() ->
   {setup,
     fun ecache_setup/0,
@@ -57,9 +63,9 @@ ecache_test_() ->
         % Now wait another 1.1 sec for a total wait of 3.2s after the last reset
         ?_E(0, fun() -> timer:sleep(1100), count(ecache:stats(tc)) end()),
         % The size of an empty ets table is stable for me at 2416 bytes.
-        ?_E(2416, ecache:total_size(tc)),
+        ?_E(empty_table_size(), ecache:total_size(tc)),
         ?_E(ok, ecache:empty(tc)),
-        ?_E(2416, ecache:total_size(tc))
+        ?_E(empty_table_size(), ecache:total_size(tc))
       ]
     end
   }.
