@@ -33,8 +33,7 @@ memoize(MemoizeCacheServer, Module, Fun, Key) ->
     ?TIMEOUT).
 
 dirty_memoize(MemoizeCacheServer, Module, Fun, Key) ->
-  gen_server:cast(MemoizeCacheServer, {generic_dirty, Module, Fun, Key},
-    ?TIMEOUT).
+  gen_server:cast(MemoizeCacheServer, {generic_dirty, Module, Fun, Key}).
 
 empty(RegisteredCacheServerName) ->
   gen_server:call(RegisteredCacheServerName, empty).
