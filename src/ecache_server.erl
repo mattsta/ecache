@@ -212,9 +212,10 @@ unkey({ecache_multi, {M, F, A}}) -> {M, F, A}.
 
 -compile({inline, [{create_datum, 4}]}).
 create_datum(DatumKey, Data, TTL, Type) ->
-  #datum{key = DatumKey, data = Data, started = os:timestamp(),
+  Timestamp = os:timestamp(),
+  #datum{key = DatumKey, data = Data, started = Timestamp,
          ttl = TTL, remaining_ttl = TTL, type = Type,
-         last_active = os:timestamp()}.
+         last_active = Timestamp}.
 
 reap_after(EtsIndex, Key, LifeTTL) ->
   receive
@@ -272,8 +273,9 @@ update_ttl(DatumIndex, #datum{key = Key, ttl = unlimited}) ->
   ets:update_element(DatumIndex, Key, NewNow);
 update_ttl(DatumIndex, #datum{key = Key, started = Started, ttl = TTL,
                   type = actual_time, ttl_reaper = Reaper}) ->
+  Timestamp = os:timestamp(),
   % Get total time in seconds this datum has been running.  Convert to ms.
-  StartedNowDiff = timer:now_diff(os:timestamp(), Started) div 1000,
+  StartedNowDiff = timer:now_diff(Timestamp, Started) div 1000,
   % If we are less than the TTL, update with TTL-used (TTL in ms too)
   % else, we ran out of time.  expire on next loop.
   TTLRemaining = if
@@ -282,7 +284,7 @@ update_ttl(DatumIndex, #datum{key = Key, started = Started, ttl = TTL,
                  end,
 
   ping_reaper(Reaper, TTLRemaining),
-  NewNowTTL = [{#datum.last_active, os:timestamp()},
+  NewNowTTL = [{#datum.last_active, Timestamp},
                {#datum.remaining_ttl, TTLRemaining}],
   ets:update_element(DatumIndex, Key, NewNowTTL);
 update_ttl(DatumIndex, #datum{key = Key, ttl = TTL, ttl_reaper = Reaper}) ->
