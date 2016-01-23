@@ -34,9 +34,7 @@ shrink_cache_to_size(Name, _CurrentCacheSize, CacheSize) ->
 
 ecache_reaper(Name, CacheSize) ->
   % sleep for 4 seconds
-  receive
-    after 4000 -> ok
-  end,
+  timer:sleep(4000),
   CurrentCacheSize = ecache:total_size(Name),
   if
     CurrentCacheSize < CacheSize -> ok;
