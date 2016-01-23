@@ -46,8 +46,8 @@ ecache_test_() ->
         ?_E(erlang:crc32("bob2"),
             ecache:memoize(tc, ?MODULE, memoize_tester, "bob2")),
         ?_E(ok, ecache:dirty_memoize(tc, ?MODULE, memoize_tester, "bob2")),
-        ?_assertMatch(Size when Size =< 3000 andalso Size >= 2000,
-                        ecache:total_size(tc)),
+        ?_assertMatch(Size when Size >= 0 andalso Size < 1000,
+                      ecache:total_size(tc) - empty_table_size()),
         ?_E(1, count(ecache:stats(tc))),
         % now, sleep for 3.1 seconds and key "bob" will auto-expire
         ?_assertMatch(0, 
