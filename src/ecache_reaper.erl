@@ -34,17 +34,8 @@ shrink_cache_to_size(Name, _CurrentCacheSize, CacheSize) ->
 
 ecache_reaper(Name, CacheSize) ->
   % sleep for 4 seconds
-  receive
-    after 4000 -> ok
-  end,
-  CurrentCacheSize = ecache:total_size(Name),
-  if
-    CurrentCacheSize < CacheSize -> ok;
-    CurrentCacheSize >= CacheSize ->
-%io:format("Cache ~p too big!  Shrinking...~n", [self()]),
-%io:format("CurrentSize: ~p; Target Size: ~p~n", [CurrentCacheSize, CacheSize]),
-      shrink_cache_to_size(Name, CurrentCacheSize, CacheSize)
-  end,
+  timer:sleep(4000),
+  shrink_cache_to_size(Name, ecache:total_size(Name), CacheSize),
   ecache_reaper(Name, CacheSize).
     
 init([Name, CacheSizeBytes]) ->
