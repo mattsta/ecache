@@ -124,13 +124,13 @@ handle_call(empty, _From, #cache{datum_index = DatumIndex} = State) ->
   {reply, ok, State};
 
 handle_call(reap_oldest, _From, #cache{datum_index = DatumIndex} = State) ->
-  LeastActive =
-    ets:foldl(fun(A, Acc) when A#datum.last_active < Acc -> A;
-                 (_, Acc) -> Acc
-              end,
-              os:timestamp(),
-              DatumIndex),
-  ets:delete(DatumIndex, LeastActive),
+  DatumNow = #datum{last_active = os:timestamp()},
+  case ets:foldl(fun(#datum{last_active = LA} = A, #datum{last_active = Acc}) when LA < Acc -> A;
+                    (_, Acc) -> Acc
+                 end, DatumNow, DatumIndex) of
+    DatumNow -> true;
+    LeastActive -> ets:delete_object(DatumIndex, LeastActive)
+  end,
   {reply, ok, State};
 
 handle_call({rand, Type, Count}, From, 
