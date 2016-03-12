@@ -131,7 +131,7 @@ handle_call(reap_oldest, _From, #cache{datum_index = DatumIndex} = State) ->
               os:timestamp(),
               DatumIndex),
   ets:delete(DatumIndex, LeastActive),
-  {from, ok, State};
+  {reply, ok, State};
 
 handle_call({rand, Type, Count}, From, 
   #cache{datum_index = DatumIndex} = State) ->
