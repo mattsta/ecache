@@ -164,12 +164,12 @@ handle_cast({dirty, Id, NewData}, State) ->
   {noreply, State};
 
 handle_cast({dirty, Id}, #cache{datum_index = DatumIndex} = State) ->
-  ets:delete(DatumIndex, key(Id)),
+  delete_datum(DatumIndex, key(Id)),
   {noreply, State};
 
 handle_cast({generic_dirty, M, F, A}, 
     #cache{datum_index = DatumIndex} = State) ->
-  ets:delete(DatumIndex, key(M, F, A)),
+  delete_datum(DatumIndex, key(M, F, A)),
   {noreply, State}.
 
 terminate(_Reason, _State) ->
@@ -209,6 +209,12 @@ unkey({ecache_multi, {M, F, A}}) -> {M, F, A}.
 %% ===================================================================
 %% Private
 %% ===================================================================
+
+delete_datum(DatumIndex, Key) ->
+  case ets:take(DatumIndex, Key) of
+    [#datum{ttl_reaper = Reaper}] when is_pid(Reaper) -> exit(Reaper, kill);
+    _ -> ok
+  end.
 
 -compile({inline, [{create_datum, 4}]}).
 create_datum(DatumKey, Data, TTL, Type) ->
