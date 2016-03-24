@@ -120,6 +120,9 @@ handle_call(stats, _From, #cache{datum_index = DatumIndex} = State) ->
   {reply, Stats, State};
 
 handle_call(empty, _From, #cache{datum_index = DatumIndex} = State) ->
+  lists:foreach(fun([Reaper]) when is_pid(Reaper) -> exit(Reaper, kill);
+                   (_) -> ok
+                end, ets:match(DatumIndex, #datum{_ = '_', ttl_reaper = '$1'})),
   ets:delete_all_objects(DatumIndex),
   {reply, ok, State};
 
@@ -129,7 +132,7 @@ handle_call(reap_oldest, _From, #cache{datum_index = DatumIndex} = State) ->
                     (_, Acc) -> Acc
                  end, DatumNow, DatumIndex) of
     DatumNow -> true;
-    LeastActive -> ets:delete_object(DatumIndex, LeastActive)
+    LeastActive -> delete_object(DatumIndex, LeastActive)
   end,
   {reply, ok, State};
 
@@ -212,11 +215,13 @@ unkey({ecache_multi, {M, F, A}}) -> {M, F, A}.
 
 delete_datum(DatumIndex, Key) ->
   case ets:lookup(DatumIndex, Key) of
-    [#datum{ttl_reaper = Reaper} = Datum] ->
-      ets:delete_object(DatumIndex, Datum),
-      is_pid(Reaper) andalso exit(Reaper, kill);
+    [Datum] -> delete_object(DatumIndex, Datum);
     _ -> ok
   end.
+
+delete_object(DatumIndex, #datum{ttl_reaper = Reaper} = Datum) ->
+  ets:delete_object(DatumIndex, Datum),
+  is_pid(Reaper) andalso exit(Reaper, kill).
 
 -compile({inline, [{create_datum, 4}]}).
 create_datum(DatumKey, Data, TTL, Type) ->
