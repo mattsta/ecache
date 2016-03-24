@@ -211,8 +211,10 @@ unkey({ecache_multi, {M, F, A}}) -> {M, F, A}.
 %% ===================================================================
 
 delete_datum(DatumIndex, Key) ->
-  case ets:take(DatumIndex, Key) of
-    [#datum{ttl_reaper = Reaper}] when is_pid(Reaper) -> exit(Reaper, kill);
+  case ets:lookup(DatumIndex, Key) of
+    [#datum{ttl_reaper = Reaper} = Datum] ->
+      ets:delete_object(DatumIndex, Datum),
+      is_pid(Reaper) andalso exit(Reaper, kill);
     _ -> ok
   end.
 
