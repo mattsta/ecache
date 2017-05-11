@@ -33,19 +33,16 @@ shrink_cache_to_size(Name, _CurrentCacheSize, CacheSize) ->
 
 ecache_reaper(Name, CacheSize) ->
   % sleep for 4 seconds
-  timer:sleep(4000),
-  CurrentCacheSize = ecache:total_size(Name),
-  shrink_cache_to_size(Name, CurrentCacheSize, CacheSize),
-  ecache_reaper(Name, CacheSize).
-    
-init([Name, CacheSizeBytes]) ->
+  shrink_cache_to_size(Name, ecache:total_size(Name), CacheSize),
+  timer:apply_after(4000, ?MODULE, ecache_reaper, [Name, CacheSize]).
+
+init([_Name, CacheSizeBytes] = Args) ->
   % ecache_reaper is started from ecache_server, but ecache_server can't finish
   % init'ing % until ecache_reaper:init/1 returns.
   % Use apply_after to make sure ecache_server exists when making calls.
   % Don't be clever and take this timer away.  Compensates for chicken/egg prob.
-  timer:apply_after(4000, ?MODULE, ecache_reaper, [Name, CacheSizeBytes]),
-  State = #reaper{cache_size = CacheSizeBytes},
-  {ok, State}.
+  timer:apply_after(4000, ?MODULE, ecache_reaper, Args),
+  {ok, #reaper{cache_size = CacheSizeBytes}}.
 
 handle_call(Arbitrary, _From, State) ->
   {reply, {arbitrary, Arbitrary}, State}.
