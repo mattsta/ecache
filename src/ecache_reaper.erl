@@ -54,7 +54,7 @@ terminate(_Reason, _State) ->
     ok.
 
 handle_info(Info, State) ->
-  io:format("Other info of: ~p~n", [Info]),
+  error_logger:info_report("Other info of: ~p~n", [Info]),
   {noreply, State}.
 
 code_change(_OldVsn, State, _Extra) ->

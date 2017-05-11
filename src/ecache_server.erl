@@ -81,7 +81,6 @@ handle_call({generic_get, M, F, Key}, From, #cache{datum_index = DatumIndex,
     default_ttl = DefaultTTL,
     cache_policy = Policy,
     data_accessor = _DataAccessor} = State) ->
-%    io:format("Requesting: ~p:~p(~p)~n", [M, F, Key]),
   spawn(fun() ->
           Reply = 
             case locate_memoize(Key, DatumIndex, M, F,
@@ -93,7 +92,6 @@ handle_call({generic_get, M, F, Key}, From, #cache{datum_index = DatumIndex,
   {noreply, State};
 
 handle_call({get, Key}, From, #cache{datum_index = _DatumIndex} = State) ->
-%    io:format("Requesting: (~p)~n", [Key]),
   spawn(fun() ->
           Reply = 
           case locate(Key, State) of
@@ -188,7 +186,7 @@ handle_info({'DOWN', _Ref, process, _Pid, _Reason}, State) ->
   {noreply, State};
 
 handle_info(Info, State) ->
-  io:format("Other info of: ~p~n", [Info]),
+  error_logger:info_report("Other info of: ~p~n", [Info]),
   {noreply, State}.
 
 code_change(_OldVsn, State, _Extra) ->
