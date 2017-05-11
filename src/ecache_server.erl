@@ -37,7 +37,7 @@ init([Name, Mod, Fun, CacheSize, CacheTime, CachePolicy]) ->
   DatumIndex = ets:new(Name, [set,
                               compressed,  % yay compression
                               public,      % public because we spawn writers
-                              {keypos, 2}, % use Key stored in record
+                              {keypos, #datum.key}, % use Key stored in record
                               {read_concurrency, true}]),
   case CacheSize of
     unlimited -> ReaperPid = nil, CacheSizeBytes = unlimited;
@@ -128,12 +128,10 @@ handle_call(empty, _From, #cache{datum_index = DatumIndex} = State) ->
 
 handle_call(reap_oldest, _From, #cache{datum_index = DatumIndex} = State) ->
   DatumNow = #datum{last_active = os:timestamp()},
-  case ets:foldl(fun(#datum{last_active = LA} = A, #datum{last_active = Acc}) when LA < Acc -> A;
-                    (_, Acc) -> Acc
-                 end, DatumNow, DatumIndex) of
-    DatumNow -> true;
-    LeastActive -> delete_object(DatumIndex, LeastActive)
-  end,
+  LeastActive = ets:foldl(fun(#datum{last_active = LA} = A, #datum{last_active = Acc}) when LA < Acc -> A;
+                             (_, Acc) -> Acc
+                          end, DatumNow, DatumIndex),
+  LeastActive =:= DatumNow orelse delete_object(DatumIndex, LeastActive),
   {reply, ok, State};
 
 handle_call({rand, Type, Count}, From, 
@@ -207,21 +205,21 @@ code_change(_OldVsn, State, _Extra) ->
 key(M, F, A) -> {ecache_multi, {M, F, A}}.
 key(Key)     -> {ecache_plain, Key}.
 unkey({ecache_plain, Key}) -> Key;
-unkey({ecache_multi, {M, F, A}}) -> {M, F, A}.
+unkey({ecache_multi, {_, _, _} = MFA}) -> MFA.
 
 %% ===================================================================
 %% Private
 %% ===================================================================
 
 delete_datum(DatumIndex, Key) ->
-  case ets:lookup(DatumIndex, Key) of
-    [Datum] -> delete_object(DatumIndex, Datum);
-    _ -> ok
+  case ets:take(DatumIndex, Key) of
+    [#datum{ttl_reaper = Reaper}] when is_pid(Reaper) -> exit(Reaper, kill);
+    _ -> true
   end.
 
 delete_object(DatumIndex, #datum{ttl_reaper = Reaper} = Datum) ->
-  ets:delete_object(DatumIndex, Datum),
-  is_pid(Reaper) andalso exit(Reaper, kill).
+  is_pid(Reaper) andalso exit(Reaper, kill),
+  ets:delete_object(DatumIndex, Datum).
 
 -compile({inline, [{create_datum, 4}]}).
 create_datum(DatumKey, Data, TTL, Type) ->
@@ -241,8 +239,7 @@ reap_after(EtsIndex, Key, LifeTTL) ->
 launch_datum_ttl_reaper(_, _, #datum{remaining_ttl = unlimited} = Datum) ->
   Datum;
 launch_datum_ttl_reaper(EtsIndex, Key, #datum{remaining_ttl = TTL} = Datum) ->
-  Reaper = spawn_link(fun() -> reap_after(EtsIndex, Key, TTL) end),
-  Datum#datum{ttl_reaper = Reaper}.
+  Datum#datum{ttl_reaper = spawn_link(fun() -> reap_after(EtsIndex, Key, TTL) end)}.
 
 
 -compile({inline, [{datum_error, 2}]}).
@@ -282,24 +279,19 @@ ping_reaper(Reaper, NewTTL) when is_pid(Reaper) ->
 ping_reaper(_, _) -> ok.
 
 update_ttl(DatumIndex, #datum{key = Key, ttl = unlimited}) ->
-  NewNow = {#datum.last_active, os:timestamp()},
-  ets:update_element(DatumIndex, Key, NewNow);
+  ets:update_element(DatumIndex, Key, {#datum.last_active, os:timestamp()});
 update_ttl(DatumIndex, #datum{key = Key, started = Started, ttl = TTL,
                   type = actual_time, ttl_reaper = Reaper}) ->
   Timestamp = os:timestamp(),
   % Get total time in seconds this datum has been running.  Convert to ms.
-  StartedNowDiff = timer:now_diff(Timestamp, Started) div 1000,
   % If we are less than the TTL, update with TTL-used (TTL in ms too)
   % else, we ran out of time.  expire on next loop.
-  TTLRemaining = if
-                   StartedNowDiff < TTL -> TTL - StartedNowDiff;
-                                   true -> 0
+  TTLRemaining = case timer:now_diff(Timestamp, Started) div 1000 of
+                     StartedNowDiff when StartedNowDiff < TTL -> TTL - StartedNowDiff;
+                     _ -> 0
                  end,
-
   ping_reaper(Reaper, TTLRemaining),
-  NewNowTTL = [{#datum.last_active, Timestamp},
-               {#datum.remaining_ttl, TTLRemaining}],
-  ets:update_element(DatumIndex, Key, NewNowTTL);
+  ets:update_element(DatumIndex, Key, [{#datum.last_active, Timestamp}, {#datum.remaining_ttl, TTLRemaining}]);
 update_ttl(DatumIndex, #datum{key = Key, ttl = TTL, ttl_reaper = Reaper}) ->
   ping_reaper(Reaper, TTL),
   ets:update_element(DatumIndex, Key, {#datum.last_active, os:timestamp()}).
@@ -312,8 +304,7 @@ fetch_data(Key, #cache{datum_index = DatumIndex}) when is_tuple(Key) ->
   end.
 
 replace_datum(Key, Data, #cache{datum_index = DatumIndex}) when is_tuple(Key) ->
-  NewDataActive = [{#datum.data, Data}, {#datum.last_active, os:timestamp()}],
-  ets:update_element(DatumIndex, Key, NewDataActive),
+  ets:update_element(DatumIndex, Key, [{#datum.data, Data}, {#datum.last_active, os:timestamp()}]),
   Data.
 
 get_all_keys(EtsIndex) ->
@@ -327,4 +318,3 @@ get_all_keys(EtsIndex, NextKey, Accum) ->
 %% ===================================================================
 %% Data Abstraction
 %% ===================================================================
-
