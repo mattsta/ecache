@@ -8,6 +8,7 @@
 
 -record(cache, {name, datum_index, data_module, 
                 reaper_pid, data_accessor, cache_size,
+                found = 0, launched = 0,
                 cache_policy, default_ttl}).
 
 -record(datum, {key, mgr, data, started, ttl_reaper = nil,
@@ -81,23 +82,20 @@ handle_call({generic_get, M, F, Key}, From, #cache{datum_index = DatumIndex,
     default_ttl = DefaultTTL,
     cache_policy = Policy,
     data_accessor = _DataAccessor} = State) ->
+  P = self(),
   spawn(fun() ->
-          Reply = 
-            case locate_memoize(Key, DatumIndex, M, F,
-                                DefaultTTL, Policy, State) of
-              {_, Data} -> Data
-            end,
-          gen_server:reply(From, Reply)
+          {F, Reply} = locate_memoize(Key, DatumIndex, M, F, DefaultTTL, Policy, State),
+          gen_server:reply(From, Reply),
+          gen_server:cast(P, F)
         end),
   {noreply, State};
 
 handle_call({get, Key}, From, #cache{datum_index = _DatumIndex} = State) ->
+  P = self(),
   spawn(fun() ->
-          Reply = 
-          case locate(Key, State) of
-            {_, Data} -> Data
-          end,
-          gen_server:reply(From, Reply)
+          {F, Reply} = locate(Key, State),
+          gen_server:reply(From, Reply),
+          gen_server:cast(P, F)
         end),
   {noreply, State};
 
@@ -107,14 +105,16 @@ handle_call(total_size, _From, #cache{datum_index = DatumIndex} = State) ->
   TableBytes = ets:info(DatumIndex, memory) * erlang:system_info(wordsize),
   {reply, TableBytes, State};
 
-handle_call(stats, _From, #cache{datum_index = DatumIndex} = State) ->
+handle_call(stats, _From, #cache{datum_index = DatumIndex, found = Found, launched = Launched} = State) ->
   EtsInfo = ets:info(DatumIndex),
   CacheName = proplists:get_value(name, EtsInfo),
   DatumCount = proplists:get_value(size, EtsInfo),
   Bytes = proplists:get_value(memory, EtsInfo) * erlang:system_info(wordsize),
   Stats = [{cache_name, CacheName},
            {memory_size_bytes, Bytes},
-           {datum_count, DatumCount}],
+           {datum_count, DatumCount},
+           {found, Found},
+           {launched, Launched}],
   {reply, Stats, State};
 
 handle_call(empty, _From, #cache{datum_index = DatumIndex} = State) ->
@@ -161,6 +161,12 @@ handle_call(Arbitrary, _From, State) ->
 handle_cast({dirty, Id, NewData}, State) ->
   replace_datum(key(Id), NewData, State),
   {noreply, State};
+
+handle_cast(found, #cache{found = Found} = State) ->
+  {noreply, State#cache{found = Found + 1}};
+
+handle_cast(launched, #cache{launched = Launched} = State) ->
+  {noreply, State#cache{launched = Launched + 1}};
 
 handle_cast({dirty, Id}, #cache{datum_index = DatumIndex} = State) ->
   delete_datum(DatumIndex, key(Id)),
