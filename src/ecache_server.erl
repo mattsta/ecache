@@ -6,7 +6,8 @@
 -export([init/1, handle_call/3, handle_cast/2,
          handle_info/2, terminate/2, code_change/3]).
 
--record(cache, {name, datum_index, data_module, 
+-record(cache, {name, datum_index, table_pad = 0,
+                data_module,
                 reaper_pid, data_accessor, cache_size,
                 found = 0, launched = 0,
                 cache_policy, default_ttl}).
@@ -49,6 +50,7 @@ init([Name, Mod, Fun, CacheSize, CacheTime, CachePolicy]) ->
 
   State = #cache{name = Name,
                  datum_index = DatumIndex,
+                 table_pad = ets:info(DatumIndex, memory),
                  data_module = Mod,
                  data_accessor = Fun,
                  reaper_pid = ReaperPid,
@@ -105,14 +107,12 @@ handle_call(total_size, _From, #cache{datum_index = DatumIndex} = State) ->
   TableBytes = ets:info(DatumIndex, memory) * erlang:system_info(wordsize),
   {reply, TableBytes, State};
 
-handle_call(stats, _From, #cache{datum_index = DatumIndex, found = Found, launched = Launched} = State) ->
+handle_call(stats, _From,
+            #cache{datum_index = DatumIndex, table_pad = TabPad, found = Found, launched = Launched} = State) ->
   EtsInfo = ets:info(DatumIndex),
-  CacheName = proplists:get_value(name, EtsInfo),
-  DatumCount = proplists:get_value(size, EtsInfo),
-  Bytes = proplists:get_value(memory, EtsInfo) * erlang:system_info(wordsize),
-  Stats = [{cache_name, CacheName},
-           {memory_size_bytes, Bytes},
-           {datum_count, DatumCount},
+  Stats = [{cache_name, proplists:get_value(name, EtsInfo)},
+           {memory_size_bytes, (proplists:get_value(memory, EtsInfo) - TabPad) * erlang:system_info(wordsize)},
+           {datum_count, proplists:get_value(size, EtsInfo)},
            {found, Found},
            {launched, Launched}],
   {reply, Stats, State};
