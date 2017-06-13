@@ -13,7 +13,7 @@
                 cache_policy, default_ttl,
                 update_key_locks = maps:new()}).
 
--record(datum, {key, mgr, data, started, ttl_reaper = nil,
+-record(datum, {key, mgr, data, started, ttl_reaper,
                 last_active, ttl, type = mru, remaining_ttl}).
 
 % make 8 MB cache
@@ -37,28 +37,27 @@ start_link(Name, Mod, Fun, CacheSize, CacheTime, CachePolicy) ->
 %%%----------------------------------------------------------------------
 
 init([Name, Mod, Fun, CacheSize, CacheTime, CachePolicy]) ->
-  DatumIndex = ets:new(Name, [set,
-                              compressed,  % yay compression
-                              public,      % public because we spawn writers
-                              {keypos, #datum.key}, % use Key stored in record
-                              {read_concurrency, true}]),
-  case CacheSize of
-    unlimited -> ReaperPid = nil, CacheSizeBytes = unlimited;
-            _ -> CacheSizeBytes = CacheSize*1024*1024, 
-                 {ok, ReaperPid} = ecache_reaper:start(Name, CacheSizeBytes),
-                 erlang:monitor(process, ReaperPid)
-  end,
-
-  State = #cache{name = Name,
-                 datum_index = DatumIndex,
-                 table_pad = ets:info(DatumIndex, memory),
-                 data_module = Mod,
-                 data_accessor = Fun,
-                 reaper_pid = ReaperPid,
-                 default_ttl = CacheTime,
-                 cache_policy = CachePolicy,
-                 cache_size = CacheSizeBytes},
-  {ok, State}.
+    DatumIndex = ets:new(Name, [set, compressed,
+                                public,      % public because we spawn writers
+                                {keypos, #datum.key}, % use Key stored in record
+                                {read_concurrency, true}]),
+    init(#cache{name = Name,
+                datum_index = DatumIndex,
+                table_pad = ets:info(DatumIndex, memory),
+                data_module = Mod,
+                data_accessor = Fun,
+                default_ttl = CacheTime,
+                cache_policy = CachePolicy,
+                cache_size = if
+                                 CacheSize =:= unlimited -> unlimited;
+                                 true -> CacheSize * (1024 * 1024)
+                             end});
+init(#cache{cache_size = unlimited} = State) -> {ok, State};
+init(#cache{name = Name, cache_size = CacheSizeBytes} = State) ->
+    {ok, State#cache{reaper_pid = begin
+                                  {ok, ReaperPid} = ecache_reaper:start(Name, CacheSizeBytes),
+                                  erlang:monitor(process, ReaperPid)
+                                  end}}.
 
 handle_call({generic_get, M, F, DatumKey}, From, #cache{datum_index = DatumIndex, default_ttl = DefaultTTL,
                                                         cache_policy = Policy} = State) ->
