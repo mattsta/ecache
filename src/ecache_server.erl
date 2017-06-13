@@ -10,7 +10,8 @@
                 data_module,
                 reaper_pid, data_accessor, cache_size,
                 found = 0, launched = 0,
-                cache_policy, default_ttl}).
+                cache_policy, default_ttl,
+                update_key_locks = maps:new()}).
 
 -record(datum, {key, mgr, data, started, ttl_reaper = nil,
                 last_active, ttl, type = mru, remaining_ttl}).
@@ -59,50 +60,63 @@ init([Name, Mod, Fun, CacheSize, CacheTime, CachePolicy]) ->
                  cache_size = CacheSizeBytes},
   {ok, State}.
 
-locate(DatumKey, DatumIndex, DataModule,
-               DataAccessor, DefaultTTL, Policy) ->
-  case fetch_data(key(DatumKey), DatumIndex) of
-    {ecache, notfound} -> Data = launch_datum(DatumKey, DatumIndex, DataModule,
-                                              DataAccessor, DefaultTTL, Policy),
-                          {launched, Data};
-    Data -> {found, Data}
-  end.
-
-locate_memoize(DatumKey, DatumIndex, DataModule,
-               DataAccessor, DefaultTTL, Policy) ->
-  case fetch_data(key(DataModule, DataAccessor, DatumKey), DatumIndex) of
-    {ecache, notfound} -> Data = launch_memoize_datum(DatumKey,
-                                   DatumIndex, DataModule,
-                                   DataAccessor, DefaultTTL, Policy),
-                          {launched, Data};
-    Data -> {found, Data}
-  end.
-
-handle_call({generic_get, M, F, Key}, From, #cache{datum_index = DatumIndex,
+handle_call({generic_get, M, F, DatumKey}, From, #cache{datum_index = DatumIndex,
     data_module = _DataModule,
     default_ttl = DefaultTTL,
     cache_policy = Policy,
-    data_accessor = _DataAccessor} = State) ->
+    data_accessor = _DataAccessor,
+    update_key_locks = LocksMap} = State) ->
   P = self(),
-  spawn(fun() ->
-          {FoundType, Reply} = locate_memoize(Key, DatumIndex, M, F, DefaultTTL, Policy),
-          gen_server:reply(From, Reply),
-          gen_server:cast(P, FoundType)
-        end),
-  {noreply, State};
+  case fetch_data(key(M, F, DatumKey), DatumIndex) of
+    {ecache, notfound} ->
+      CurrentLockPid = maps:get(DatumKey, LocksMap, null),
+      UpdatePid = spawn(fun() ->
+        Data = if
+          CurrentLockPid == null -> %% no lock
+            Res = launch_memoize_datum(DatumKey, DatumIndex, M, F, DefaultTTL, Policy),
+            gen_server:cast(P, {launched, DatumKey}),
+            Res;
+          is_pid(CurrentLockPid) ->
+            Ref = erlang:monitor(process, CurrentLockPid),
+            receive {'DOWN', Ref, process, _, _} -> gen_server:call(P, {get, DatumKey}) end
+        end,
+        gen_server:reply(From, Data)
+      end),
+      NewLocksMap = if CurrentLockPid == null -> maps:put(DatumKey, UpdatePid, LocksMap); true -> LocksMap end,
+      {noreply, State#cache{update_key_locks = NewLocksMap}};
+    Data ->
+      spawn(fun() -> gen_server:cast(P, found) end),
+      {reply, Data, State}
+  end;
 
-handle_call({get, Key}, From, #cache{datum_index = DatumIndex,
+handle_call({get, DatumKey}, From, #cache{datum_index = DatumIndex,
     data_module = DataModule,
     default_ttl = DefaultTTL,
     cache_policy = Policy,
-    data_accessor = DataAccessor} = State) ->
+    data_accessor = DataAccessor,
+    update_key_locks = LocksMap} = State) ->
   P = self(),
-  spawn(fun() ->
-          {F, Reply} = locate(Key, DatumIndex, DataModule, DataAccessor, DefaultTTL, Policy),
-          gen_server:reply(From, Reply),
-          gen_server:cast(P, F)
-        end),
-  {noreply, State};
+  case fetch_data(key(DatumKey), DatumIndex) of
+    {ecache, notfound} ->
+      CurrentLockPid = maps:get(DatumKey, LocksMap, null),
+      UpdatePid = spawn(fun() ->
+        Data = if
+          CurrentLockPid == null -> %% no lock
+            Res = launch_datum(DatumKey, DatumIndex, DataModule, DataAccessor, DefaultTTL, Policy),
+            gen_server:cast(P, {launched, DatumKey}),
+            Res;
+          is_pid(CurrentLockPid) ->
+            Ref = erlang:monitor(process, CurrentLockPid),
+            receive {'DOWN', Ref, process, _, _} -> gen_server:call(P, {get, DatumKey}) end
+        end,
+        gen_server:reply(From, Data)
+      end),
+      NewLocksMap = if CurrentLockPid == null -> maps:put(DatumKey, UpdatePid, LocksMap); true -> LocksMap end,
+      {noreply, State#cache{update_key_locks = NewLocksMap}};
+    Data ->
+      spawn(fun() -> gen_server:cast(P, found) end),
+      {reply, Data, State}
+  end;
 
 % NB: total_size using ETS includes ETS overhead.  An empty table still
 % has a size.
@@ -168,8 +182,8 @@ handle_cast({dirty, Id, NewData}, State = #cache{datum_index = DatumIndex}) ->
 handle_cast(found, #cache{found = Found} = State) ->
   {noreply, State#cache{found = Found + 1}};
 
-handle_cast(launched, #cache{launched = Launched} = State) ->
-  {noreply, State#cache{launched = Launched + 1}};
+handle_cast({launched, DatumKey}, #cache{launched = Launched, update_key_locks = LocksMap} = State) ->
+  {noreply, State#cache{launched = Launched + 1, update_key_locks = maps:remove(DatumKey, LocksMap)}};
 
 handle_cast({dirty, Id}, #cache{datum_index = DatumIndex} = State) ->
   delete_datum(DatumIndex, key(Id)),
