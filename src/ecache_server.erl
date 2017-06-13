@@ -11,7 +11,7 @@
                 reaper_pid, data_accessor, cache_size,
                 found = 0, launched = 0,
                 cache_policy, default_ttl,
-                update_key_locks = maps:new()}).
+                update_key_locks = dict:new()}).
 
 -record(datum, {key, mgr, data, started, ttl_reaper = nil,
                 last_active, ttl, type = mru, remaining_ttl}).
@@ -67,7 +67,7 @@ handle_call({generic_get, M, F, DatumKey}, From, #cache{datum_index = DatumIndex
         {ecache, notfound} ->
             Locks = State#cache.update_key_locks,
             {noreply,
-             case maps:find(DatumKey, Locks) of
+             case dict:find(DatumKey, Locks) of
                  {ok, CurrentLockPid} when is_pid(CurrentLockPid) ->
                      spawn(fun() ->
                                Ref = monitor(process, CurrentLockPid),
@@ -78,15 +78,15 @@ handle_call({generic_get, M, F, DatumKey}, From, #cache{datum_index = DatumIndex
                            end),
                      State;
                  error ->
-                     State#cache{update_key_locks = maps:put(DatumKey,
-                                                             spawn(fun() ->
-                                                                       Data = launch_memoize_datum(DatumKey, DatumIndex,
-                                                                                                   M, F,
-                                                                                                   DefaultTTL, Policy),
-                                                                       gen_server:cast(P, {launched, DatumKey}),
-                                                                       gen_server:reply(From, Data)
-                                                                   end),
-                                                             Locks)}
+                     State#cache{update_key_locks = dict:store(DatumKey,
+                                                               spawn(fun() ->
+                                                                         Data = launch_memoize_datum(DatumKey,
+                                                                                                     DatumIndex, M, F,
+                                                                                                     DefaultTTL, Policy),
+                                                                         gen_server:cast(P, {launched, DatumKey}),
+                                                                         gen_server:reply(From, Data)
+                                                                     end),
+                                                               Locks)}
             end};
         Data ->
             spawn(fun() -> gen_server:cast(P, found) end),
@@ -100,7 +100,7 @@ handle_call({get, DatumKey}, From,
     case fetch_data(key(DatumKey), DatumIndex) of
         {ecache, notfound} ->
             {noreply,
-             case maps:find(DatumKey, Locks) of
+             case dict:find(DatumKey, Locks) of
                  {ok, CurrentLockPid} when is_pid(CurrentLockPid) ->
                      spawn(fun() ->
                                Ref = erlang:monitor(process, CurrentLockPid),
@@ -111,15 +111,15 @@ handle_call({get, DatumKey}, From,
                            end),
                      State;
                  error ->
-                     State#cache{update_key_locks = maps:put(DatumKey,
-                                                             spawn(fun() ->
-                                                                       Data = launch_datum(DatumKey, DatumIndex,
-                                                                                           DataModule, DataAccessor,
-                                                                                           DefaultTTL, Policy),
-                                                                       gen_server:cast(P, {launched, DatumKey}),
-                                                                       gen_server:reply(From, Data)
-                                                                   end),
-                                                             Locks)}
+                     State#cache{update_key_locks = dict:store(DatumKey,
+                                                               spawn(fun() ->
+                                                                         Data = launch_datum(DatumKey, DatumIndex,
+                                                                                             DataModule, DataAccessor,
+                                                                                             DefaultTTL, Policy),
+                                                                         gen_server:cast(P, {launched, DatumKey}),
+                                                                         gen_server:reply(From, Data)
+                                                                     end),
+                                                               Locks)}
              end};
         Data ->
             spawn(fun() -> gen_server:cast(P, found) end),
@@ -191,7 +191,7 @@ handle_cast(found, #cache{found = Found} = State) ->
   {noreply, State#cache{found = Found + 1}};
 
 handle_cast({launched, DatumKey}, #cache{launched = Launched, update_key_locks = Locks} = State) ->
-  {noreply, State#cache{launched = Launched + 1, update_key_locks = maps:remove(DatumKey, Locks)}};
+  {noreply, State#cache{launched = Launched + 1, update_key_locks = dict:erase(DatumKey, Locks)}};
 
 handle_cast({dirty, Id}, #cache{datum_index = DatumIndex} = State) ->
   delete_datum(DatumIndex, key(Id)),
