@@ -59,10 +59,9 @@ init([Name, Mod, Fun, CacheSize, CacheTime, CachePolicy]) ->
                  cache_size = CacheSizeBytes},
   {ok, State}.
 
-locate(DatumKey, #cache{datum_index = DatumIndex, data_module = DataModule,
-                  default_ttl = DefaultTTL, cache_policy = Policy,
-                  data_accessor = DataAccessor} = State) ->
-  case fetch_data(key(DatumKey), State) of 
+locate(DatumKey, DatumIndex, DataModule,
+               DataAccessor, DefaultTTL, Policy) ->
+  case fetch_data(key(DatumKey), DatumIndex) of
     {ecache, notfound} -> Data = launch_datum(DatumKey, DatumIndex, DataModule,
                                               DataAccessor, DefaultTTL, Policy),
                           {launched, Data};
@@ -70,8 +69,8 @@ locate(DatumKey, #cache{datum_index = DatumIndex, data_module = DataModule,
   end.
 
 locate_memoize(DatumKey, DatumIndex, DataModule,
-               DataAccessor, DefaultTTL, Policy, State) ->
-  case fetch_data(key(DataModule, DataAccessor, DatumKey), State) of
+               DataAccessor, DefaultTTL, Policy) ->
+  case fetch_data(key(DataModule, DataAccessor, DatumKey), DatumIndex) of
     {ecache, notfound} -> Data = launch_memoize_datum(DatumKey,
                                    DatumIndex, DataModule,
                                    DataAccessor, DefaultTTL, Policy),
@@ -86,16 +85,20 @@ handle_call({generic_get, M, F, Key}, From, #cache{datum_index = DatumIndex,
     data_accessor = _DataAccessor} = State) ->
   P = self(),
   spawn(fun() ->
-          {FoundType, Reply} = locate_memoize(Key, DatumIndex, M, F, DefaultTTL, Policy, State),
+          {FoundType, Reply} = locate_memoize(Key, DatumIndex, M, F, DefaultTTL, Policy),
           gen_server:reply(From, Reply),
           gen_server:cast(P, FoundType)
         end),
   {noreply, State};
 
-handle_call({get, Key}, From, #cache{datum_index = _DatumIndex} = State) ->
+handle_call({get, Key}, From, #cache{datum_index = DatumIndex,
+    data_module = DataModule,
+    default_ttl = DefaultTTL,
+    cache_policy = Policy,
+    data_accessor = DataAccessor} = State) ->
   P = self(),
   spawn(fun() ->
-          {F, Reply} = locate(Key, State),
+          {F, Reply} = locate(Key, DatumIndex, DataModule, DataAccessor, DefaultTTL, Policy),
           gen_server:reply(From, Reply),
           gen_server:cast(P, F)
         end),
@@ -140,14 +143,14 @@ handle_call({rand, Type, Count}, From,
           FoundData = 
           case Length =< Count of
             true  -> case Type of
-                       data -> [fetch_data(P, State) || P <- AllKeys];
+                       data -> [fetch_data(P, DatumIndex) || P <- AllKeys];
                        keys -> [unkey(K) || K <- AllKeys]
                      end;
             false ->  RandomSet  = [crypto:rand_uniform(1, Length) || 
                                       _ <- lists:seq(1, Count)],
                       RandomKeys = [lists:nth(Q, AllKeys) || Q <- RandomSet],
                       case Type of
-                        data -> [fetch_data(P, State) || P <- RandomKeys];
+                        data -> [fetch_data(P, DatumIndex) || P <- RandomKeys];
                         keys -> [unkey(K) || K <- RandomKeys]
                       end
           end,
@@ -158,8 +161,8 @@ handle_call({rand, Type, Count}, From,
 handle_call(Arbitrary, _From, State) ->
   {reply, {arbitrary, Arbitrary}, State}.
 
-handle_cast({dirty, Id, NewData}, State) ->
-  replace_datum(key(Id), NewData, State),
+handle_cast({dirty, Id, NewData}, State = #cache{datum_index = DatumIndex}) ->
+  replace_datum(key(Id), NewData, DatumIndex),
   {noreply, State};
 
 handle_cast(found, #cache{found = Found} = State) ->
@@ -300,14 +303,14 @@ update_ttl(DatumIndex, #datum{key = Key, ttl = TTL, ttl_reaper = Reaper}) ->
   ping_reaper(Reaper, TTL),
   ets:update_element(DatumIndex, Key, {#datum.last_active, os:timestamp()}).
 
-fetch_data(Key, #cache{datum_index = DatumIndex}) when is_tuple(Key) ->
+fetch_data(Key, DatumIndex) when is_tuple(Key) ->
   case ets:lookup(DatumIndex, Key) of
     [Datum] -> update_ttl(DatumIndex, Datum),
                data_from_datum(Datum);
          [] -> {ecache, notfound}
   end.
 
-replace_datum(Key, Data, #cache{datum_index = DatumIndex}) when is_tuple(Key) ->
+replace_datum(Key, Data, DatumIndex) when is_tuple(Key) ->
   ets:update_element(DatumIndex, Key, [{#datum.data, Data}, {#datum.last_active, os:timestamp()}]),
   Data.
 
