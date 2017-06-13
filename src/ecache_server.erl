@@ -86,9 +86,9 @@ handle_call({generic_get, M, F, Key}, From, #cache{datum_index = DatumIndex,
     data_accessor = _DataAccessor} = State) ->
   P = self(),
   spawn(fun() ->
-          {F, Reply} = locate_memoize(Key, DatumIndex, M, F, DefaultTTL, Policy, State),
+          {FoundType, Reply} = locate_memoize(Key, DatumIndex, M, F, DefaultTTL, Policy, State),
           gen_server:reply(From, Reply),
-          gen_server:cast(P, F)
+          gen_server:cast(P, FoundType)
         end),
   {noreply, State};
 
