@@ -92,7 +92,6 @@ handle_call({generic_get, M, F, DatumKey}, From, #cache{datum_index = DatumIndex
             spawn(fun() -> gen_server:cast(P, found) end),
             {reply, Data, State}
     end;
-
 handle_call({get, DatumKey}, From, #cache{datum_index = DatumIndex, data_module = DataModule, default_ttl = DefaultTTL,
                                           cache_policy = Policy, data_accessor = DataAccessor} = State) ->
     P = self(),
@@ -125,103 +124,79 @@ handle_call({get, DatumKey}, From, #cache{datum_index = DatumIndex, data_module 
             spawn(fun() -> gen_server:cast(P, found) end),
             {reply, Data, State}
     end;
-
 % NB: total_size using ETS includes ETS overhead.  An empty table still
 % has a size.
-handle_call(total_size, _From, #cache{datum_index = DatumIndex} = State) ->
-  TableBytes = ets:info(DatumIndex, memory) * erlang:system_info(wordsize),
-  {reply, TableBytes, State};
-
-handle_call(stats, _From,
-            #cache{datum_index = DatumIndex, table_pad = TabPad, found = Found, launched = Launched} = State) ->
-  EtsInfo = ets:info(DatumIndex),
-  Stats = [{cache_name, proplists:get_value(name, EtsInfo)},
-           {memory_size_bytes, (proplists:get_value(memory, EtsInfo) - TabPad) * erlang:system_info(wordsize)},
-           {datum_count, proplists:get_value(size, EtsInfo)},
-           {found, Found},
-           {launched, Launched}],
-  {reply, Stats, State};
-
+handle_call(total_size, _From, #cache{} = State) -> {reply, cache_bytes(State), State};
+handle_call(stats, _From, #cache{datum_index = DatumIndex, found = Found, launched = Launched} = State) ->
+    EtsInfo = ets:info(DatumIndex),
+    {reply,
+     [{cache_name, proplists:get_value(name, EtsInfo)},
+      {memory_size_bytes, cache_bytes(State, proplists:get_value(memory, EtsInfo))},
+      {datum_count, proplists:get_value(size, EtsInfo)},
+      {found, Found}, {launched, Launched}],
+     State};
 handle_call(empty, _From, #cache{datum_index = DatumIndex} = State) ->
-  lists:foreach(fun([Reaper]) when is_pid(Reaper) -> exit(Reaper, kill);
-                   (_) -> ok
-                end, ets:match(DatumIndex, #datum{_ = '_', ttl_reaper = '$1'})),
-  ets:delete_all_objects(DatumIndex),
-  {reply, ok, State};
-
+    lists:foreach(fun([Reaper]) when is_pid(Reaper) -> exit(Reaper, kill);
+                     (_) -> ok
+                  end, ets:match(DatumIndex, #datum{_ = '_', ttl_reaper = '$1'})),
+    ets:delete_all_objects(DatumIndex),
+    {reply, ok, State};
 handle_call(reap_oldest, _From, #cache{datum_index = DatumIndex} = State) ->
-  DatumNow = #datum{last_active = os:timestamp()},
-  LeastActive = ets:foldl(fun(#datum{last_active = LA} = A, #datum{last_active = Acc}) when LA < Acc -> A;
-                             (_, Acc) -> Acc
-                          end, DatumNow, DatumIndex),
-  LeastActive =:= DatumNow orelse delete_object(DatumIndex, LeastActive),
-  {reply, ok, State};
-
-handle_call({rand, Type, Count}, From, 
-  #cache{datum_index = DatumIndex} = State) ->
-  spawn(fun() ->
-          AllKeys = get_all_keys(DatumIndex),
-          Length = length(AllKeys),
-          FoundData = 
-          case Length =< Count of
-            true  -> case Type of
-                       data -> [fetch_data(P, DatumIndex) || P <- AllKeys];
-                       keys -> [unkey(K) || K <- AllKeys]
-                     end;
-            false ->  RandomSet  = [crypto:rand_uniform(1, Length) || 
-                                      _ <- lists:seq(1, Count)],
-                      RandomKeys = [lists:nth(Q, AllKeys) || Q <- RandomSet],
-                      case Type of
-                        data -> [fetch_data(P, DatumIndex) || P <- RandomKeys];
-                        keys -> [unkey(K) || K <- RandomKeys]
-                      end
-          end,
-          gen_server:reply(From, FoundData)
-        end),
-  {noreply, State};
-
-handle_call(Arbitrary, _From, State) ->
-  {reply, {arbitrary, Arbitrary}, State}.
+    DatumNow = #datum{last_active = os:timestamp()},
+    LeastActive = ets:foldl(fun(#datum{last_active = LA} = A, #datum{last_active = Acc}) when LA < Acc -> A;
+                               (_, Acc) -> Acc
+                            end, DatumNow, DatumIndex),
+    LeastActive =:= DatumNow orelse delete_object(DatumIndex, LeastActive),
+    {reply, ok, State};
+handle_call({rand, Type, Count}, From, #cache{datum_index = DatumIndex} = State) ->
+    spawn(fun() ->
+            AllKeys = get_all_keys(DatumIndex),
+            Length = length(AllKeys),
+            FoundData = 
+            case Length =< Count of
+              true  -> case Type of
+                         data -> [fetch_data(P, DatumIndex) || P <- AllKeys];
+                         keys -> [unkey(K) || K <- AllKeys]
+                       end;
+              false ->  RandomSet  = [crypto:rand_uniform(1, Length) || 
+                                        _ <- lists:seq(1, Count)],
+                        RandomKeys = [lists:nth(Q, AllKeys) || Q <- RandomSet],
+                        case Type of
+                          data -> [fetch_data(P, DatumIndex) || P <- RandomKeys];
+                          keys -> [unkey(K) || K <- RandomKeys]
+                        end
+            end,
+            gen_server:reply(From, FoundData)
+          end),
+    {noreply, State};
+handle_call(Arbitrary, _From, State) -> {reply, {arbitrary, Arbitrary}, State}.
 
 handle_cast({dirty, Id, NewData}, #cache{datum_index = DatumIndex} = State) ->
-  replace_datum(key(Id), NewData, DatumIndex),
-  {noreply, State};
-
-handle_cast(found, #cache{found = Found} = State) ->
-  {noreply, State#cache{found = Found + 1}};
-
+    replace_datum(key(Id), NewData, DatumIndex),
+    {noreply, State};
+handle_cast(found, #cache{found = Found} = State) -> {noreply, State#cache{found = Found + 1}};
 handle_cast({launched, DatumKey}, #cache{launched = Launched, update_key_locks = Locks} = State) ->
-  {noreply, State#cache{launched = Launched + 1, update_key_locks = maps:remove(DatumKey, Locks)}};
-
+    {noreply, State#cache{launched = Launched + 1, update_key_locks = maps:remove(DatumKey, Locks)}};
 handle_cast({dirty, Id}, #cache{datum_index = DatumIndex} = State) ->
-  delete_datum(DatumIndex, key(Id)),
-  {noreply, State};
+    delete_datum(DatumIndex, key(Id)),
+    {noreply, State};
+handle_cast({generic_dirty, M, F, A}, #cache{datum_index = DatumIndex} = State) ->
+    delete_datum(DatumIndex, key(M, F, A)),
+    {noreply, State}.
 
-handle_cast({generic_dirty, M, F, A}, 
-    #cache{datum_index = DatumIndex} = State) ->
-  delete_datum(DatumIndex, key(M, F, A)),
-  {noreply, State}.
-
-terminate(_Reason, _State) ->
-    ok.
-
-handle_info({destroy,_DatumPid, ok}, State) ->
-  {noreply, State};
-
-handle_info({'DOWN', _Ref, process, ReaperPid, _Reason}, 
-    #cache{reaper_pid = ReaperPid, name = Name, cache_size = Size} = State) ->
-  {NewReaperPid, _Mon} = ecache_reaper:start_link(Name, Size),
-  {noreply, State#cache{reaper_pid = NewReaperPid}};
-
-handle_info({'DOWN', _Ref, process, _Pid, _Reason}, State) ->
-  {noreply, State};
-
+handle_info({destroy,_DatumPid, ok}, State) -> {noreply, State};
+handle_info({'DOWN', _Ref, process, ReaperPid, _Reason},
+            #cache{reaper_pid = ReaperPid, name = Name, cache_size = Size} = State) ->
+    {NewReaperPid, _Mon} = ecache_reaper:start_link(Name, Size),
+    {noreply, State#cache{reaper_pid = NewReaperPid}};
+handle_info({'DOWN', _Ref, process, _Pid, _Reason}, State) -> {noreply, State};
 handle_info(Info, State) ->
-  error_logger:info_report("Other info of: ~p~n", [Info]),
-  {noreply, State}.
+    error_logger:info_report("Other info of: ~p~n", [Info]),
+    {noreply, State}.
 
-code_change(_OldVsn, State, _Extra) ->
-  {ok, State}.
+terminate(_Reason, _State) -> ok.
+
+code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 -compile({inline, [{key, 1}, {key, 3}]}).
 -compile({inline, [{unkey, 1}]}).
@@ -239,6 +214,10 @@ unkey({ecache_multi, {_, _, _} = MFA}) -> MFA.
 %% ===================================================================
 %% Private
 %% ===================================================================
+
+cache_bytes(#cache{datum_index = DatumIndex} = State) -> cache_bytes(State, ets:info(DatumIndex, memory)).
+
+cache_bytes(#cache{table_pad = TabPad}, Mem) -> (Mem - TabPad) * erlang:system_info(wordsize).
 
 delete_datum(DatumIndex, Key) ->
   case ets:take(DatumIndex, Key) of
