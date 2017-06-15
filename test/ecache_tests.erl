@@ -3,7 +3,6 @@
 
 -export([tester/1, memoize_tester/1]).
 
--define(E(A, B), ?assertEqual(A, B)).
 -define(_E(A, B), ?_assertEqual(A, B)).
 
 ecache_setup() ->
@@ -25,12 +24,6 @@ memoize_tester(Key) when is_binary(Key) orelse is_list(Key) ->
 count(Properties) ->
   proplists:get_value(datum_count, Properties).
 
-empty_table_size() ->
-    T = ets:new(ecache_test, [set, private]),
-    S = ets:info(T, memory) * erlang:system_info(wordsize),
-    true = ets:delete(T),
-    S.
-
 ecache_test_() ->
   {setup,
     fun ecache_setup/0,
@@ -46,8 +39,7 @@ ecache_test_() ->
         ?_E(erlang:crc32("bob2"),
             ecache:memoize(tc, ?MODULE, memoize_tester, "bob2")),
         ?_E(ok, ecache:dirty_memoize(tc, ?MODULE, memoize_tester, "bob2")),
-        ?_assertMatch(Size when Size >= 0 andalso Size < 1000,
-                      ecache:total_size(tc) - empty_table_size()),
+        ?_assertMatch(Size when Size >= 0 andalso Size < 1000, ecache:total_size(tc)),
         ?_E(1, count(ecache:stats(tc))),
         % now, sleep for 3.1 seconds and key "bob" will auto-expire
         ?_assertMatch(0, 
@@ -62,10 +54,9 @@ ecache_test_() ->
         ?_E(1, fun() -> timer:sleep(2100), count(ecache:stats(tc)) end()),
         % Now wait another 1.1 sec for a total wait of 3.2s after the last reset
         ?_E(0, fun() -> timer:sleep(1100), count(ecache:stats(tc)) end()),
-        % The size of an empty ets table is stable for me at 2416 bytes.
-        ?_E(empty_table_size(), ecache:total_size(tc)),
+        ?_E(0, ecache:total_size(tc)),
         ?_E(ok, ecache:empty(tc)),
-        ?_E(empty_table_size(), ecache:total_size(tc))
+        ?_E(0, ecache:total_size(tc))
       ]
     end
   }.
