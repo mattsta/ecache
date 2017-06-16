@@ -1,7 +1,7 @@
 ecache: Erlang ETS Based TTL Cache
 ==================================
 
-[![Build Status](https://secure.travis-ci.org/mattsta/ecache.png)](http://travis-ci.org/mattsta/ecache)
+[![Build Status](https://secure.travis-ci.org/Ledest/ecache.png)](http://travis-ci.org/Ledest/ecache)
 
 ecache stores your cache items in ets.  Each cache item gets its own monitoring
 process to auto-delete the cache item when the TTL expires.
