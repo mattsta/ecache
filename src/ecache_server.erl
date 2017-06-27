@@ -139,25 +139,21 @@ handle_call(reap_oldest, _From, #cache{datum_index = DatumIndex} = State) ->
                             end, DatumNow, DatumIndex),
     LeastActive =:= DatumNow orelse delete_object(DatumIndex, LeastActive),
     {reply, ok, State};
-handle_call({rand, Type, Count}, From, #cache{datum_index = DatumIndex} = State) ->
+handle_call({rand, Type, Count}, From, #cache{datum_index = Index} = State) ->
     spawn(fun() ->
-            AllKeys = get_all_keys(DatumIndex),
-            Length = length(AllKeys),
-            FoundData = 
-            case Length =< Count of
-              true  -> case Type of
-                         data -> [fetch_data(P, DatumIndex) || P <- AllKeys];
-                         keys -> [unkey(K) || K <- AllKeys]
-                       end;
-              false ->  RandomSet  = [crypto:rand_uniform(1, Length) || 
-                                        _ <- lists:seq(1, Count)],
-                        RandomKeys = [lists:nth(Q, AllKeys) || Q <- RandomSet],
-                        case Type of
-                          data -> [fetch_data(P, DatumIndex) || P <- RandomKeys];
-                          keys -> [unkey(K) || K <- RandomKeys]
-                        end
-            end,
-            gen_server:reply(From, FoundData)
+              AllKeys = get_all_keys(Index),
+              Length = length(AllKeys),
+              gen_server:reply(From,
+                               lists:map(if
+                                             Type =:= data -> fun(K) -> fetch_data(K, Index) end;
+                                             Type =:= keys -> fun unkey/1
+                                         end,
+                                         if
+                                             Length =< Count -> AllKeys;
+                                             true -> lists:map(fun(K) -> lists:nth(K, AllKeys) end,
+                                                               lists:map(fun(_) -> crypto:rand_uniform(1, Length) end,
+                                                                         lists:seq(1, Count)))
+                                         end))
           end),
     {noreply, State};
 handle_call(Arbitrary, _From, State) -> {reply, {arbitrary, Arbitrary}, State}.
@@ -211,34 +207,32 @@ cache_bytes(#cache{datum_index = DatumIndex} = State) -> cache_bytes(State, ets:
 cache_bytes(#cache{table_pad = TabPad}, Mem) -> (Mem - TabPad) * erlang:system_info(wordsize).
 
 delete_datum(DatumIndex, Key) ->
-  case ets:take(DatumIndex, Key) of
-    [#datum{reaper = Reaper}] when is_pid(Reaper) -> exit(Reaper, kill);
-    _ -> true
-  end.
+    case ets:take(DatumIndex, Key) of
+        [#datum{reaper = Reaper}] when is_pid(Reaper) -> exit(Reaper, kill);
+        _ -> true
+    end.
 
 delete_object(DatumIndex, #datum{reaper = Reaper} = Datum) ->
-  is_pid(Reaper) andalso exit(Reaper, kill),
-  ets:delete_object(DatumIndex, Datum).
+    is_pid(Reaper) andalso exit(Reaper, kill),
+    ets:delete_object(DatumIndex, Datum).
 
 -compile({inline, [{create_datum, 4}]}).
 create_datum(DatumKey, Data, TTL, Type) ->
-  Timestamp = os:timestamp(),
-  #datum{key = DatumKey, data = Data, started = Timestamp,
-         ttl = TTL, remaining_ttl = TTL, type = Type,
-         last_active = Timestamp}.
+    Timestamp = os:timestamp(),
+    #datum{key = DatumKey, data = Data, type = Type,
+           started = Timestamp, ttl = TTL, remaining_ttl = TTL, last_active = Timestamp}.
 
 reap_after(EtsIndex, Key, LifeTTL) ->
-  receive
-    {update_ttl, NewTTL} -> reap_after(EtsIndex, Key, NewTTL)
-  after
-    LifeTTL -> ets:delete(EtsIndex, Key),
-               exit(self(), kill)
-  end.
+    receive
+        {update_ttl, NewTTL} -> reap_after(EtsIndex, Key, NewTTL)
+    after LifeTTL ->
+        ets:delete(EtsIndex, Key),
+        exit(self(), kill)
+    end.
 
-launch_datum_ttl_reaper(_, _, #datum{remaining_ttl = unlimited} = Datum) ->
-  Datum;
+launch_datum_ttl_reaper(_, _, #datum{remaining_ttl = unlimited} = Datum) -> Datum;
 launch_datum_ttl_reaper(EtsIndex, Key, #datum{remaining_ttl = TTL} = Datum) ->
-  Datum#datum{reaper = spawn_link(fun() -> reap_after(EtsIndex, Key, TTL) end)}.
+    Datum#datum{reaper = spawn_link(fun() -> reap_after(EtsIndex, Key, TTL) end)}.
 
 
 -compile({inline, [{datum_error, 2}]}).
@@ -248,9 +242,8 @@ launch_datum(Key, EtsIndex, Module, Accessor, TTL, Policy) ->
     try Module:Accessor(Key) of
         CacheData ->
             UseKey = key(Key),
-            Datum = create_datum(UseKey, CacheData, TTL, Policy),
-            LaunchedDatum = launch_datum_ttl_reaper(EtsIndex, UseKey, Datum),
-            ets:insert(EtsIndex, LaunchedDatum),
+            ets:insert(EtsIndex,
+                       launch_datum_ttl_reaper(EtsIndex, UseKey, create_datum(UseKey, CacheData, TTL, Policy))),
             CacheData
     catch
         How:What -> datum_error({How, What}, erlang:get_stacktrace())
@@ -260,9 +253,8 @@ launch_memoize_datum(Key, EtsIndex, Module, Accessor, TTL, Policy) ->
     try Module:Accessor(Key) of
         CacheData ->
             UseKey = key(Module, Accessor, Key),
-            Datum = create_datum(UseKey, CacheData, TTL, Policy),
-            LaunchedDatum = launch_datum_ttl_reaper(EtsIndex, UseKey, Datum),
-            ets:insert(EtsIndex, LaunchedDatum),
+            ets:insert(EtsIndex,
+                       launch_datum_ttl_reaper(EtsIndex, UseKey, create_datum(UseKey, CacheData, TTL, Policy))),
             CacheData
     catch
         How:What -> datum_error({How, What}, erlang:get_stacktrace())
@@ -272,46 +264,38 @@ launch_memoize_datum(Key, EtsIndex, Module, Accessor, TTL, Policy) ->
 data_from_datum(#datum{data = Data}) -> Data.
 
 -compile({inline, [{ping_reaper, 2}]}).
-ping_reaper(Reaper, NewTTL) when is_pid(Reaper) ->
-  Reaper ! {update_ttl, NewTTL};
+ping_reaper(Reaper, NewTTL) when is_pid(Reaper) -> Reaper ! {update_ttl, NewTTL};
 ping_reaper(_, _) -> ok.
 
 update_ttl(DatumIndex, #datum{key = Key, ttl = unlimited}) ->
-  ets:update_element(DatumIndex, Key, {#datum.last_active, os:timestamp()});
+    ets:update_element(DatumIndex, Key, {#datum.last_active, os:timestamp()});
 update_ttl(DatumIndex, #datum{key = Key, started = Started, ttl = TTL, type = actual_time, reaper = Reaper}) ->
-  Timestamp = os:timestamp(),
-  % Get total time in seconds this datum has been running.  Convert to ms.
-  % If we are less than the TTL, update with TTL-used (TTL in ms too)
-  % else, we ran out of time.  expire on next loop.
-  TTLRemaining = case timer:now_diff(Timestamp, Started) div 1000 of
-                     StartedNowDiff when StartedNowDiff < TTL -> TTL - StartedNowDiff;
-                     _ -> 0
-                 end,
-  ping_reaper(Reaper, TTLRemaining),
-  ets:update_element(DatumIndex, Key, [{#datum.last_active, Timestamp}, {#datum.remaining_ttl, TTLRemaining}]);
+    Timestamp = os:timestamp(),
+    % Get total time in seconds this datum has been running.  Convert to ms.
+    % If we are less than the TTL, update with TTL-used (TTL in ms too) else, we ran out of time.  expire on next loop.
+    TTLRemaining = case timer:now_diff(Timestamp, Started) div 1000 of
+                       StartedNowDiff when StartedNowDiff < TTL -> TTL - StartedNowDiff;
+                       _ -> 0
+                   end,
+    ping_reaper(Reaper, TTLRemaining),
+    ets:update_element(DatumIndex, Key, [{#datum.last_active, Timestamp}, {#datum.remaining_ttl, TTLRemaining}]);
 update_ttl(DatumIndex, #datum{key = Key, ttl = TTL, reaper = Reaper}) ->
-  ping_reaper(Reaper, TTL),
-  ets:update_element(DatumIndex, Key, {#datum.last_active, os:timestamp()}).
+    ping_reaper(Reaper, TTL),
+    ets:update_element(DatumIndex, Key, {#datum.last_active, os:timestamp()}).
 
 fetch_data(Key, DatumIndex) when is_tuple(Key) ->
-  case ets:lookup(DatumIndex, Key) of
-    [Datum] -> update_ttl(DatumIndex, Datum),
-               data_from_datum(Datum);
-         [] -> {ecache, notfound}
-  end.
+    case ets:lookup(DatumIndex, Key) of
+        [Datum] ->
+            update_ttl(DatumIndex, Datum),
+            data_from_datum(Datum);
+        [] -> {ecache, notfound}
+    end.
 
 replace_datum(Key, Data, DatumIndex) when is_tuple(Key) ->
   ets:update_element(DatumIndex, Key, [{#datum.data, Data}, {#datum.last_active, os:timestamp()}]),
   Data.
 
-get_all_keys(EtsIndex) ->
-  get_all_keys(EtsIndex, ets:first(EtsIndex), []).
+get_all_keys(EtsIndex) -> get_all_keys(EtsIndex, ets:first(EtsIndex), []).
 
-get_all_keys(_, '$end_of_table', Accum) ->
-  Accum;
-get_all_keys(EtsIndex, NextKey, Accum) ->
-  get_all_keys(EtsIndex, ets:next(EtsIndex, NextKey), [NextKey | Accum]).
-
-%% ===================================================================
-%% Data Abstraction
-%% ===================================================================
+get_all_keys(_, '$end_of_table', Accum) -> Accum;
+get_all_keys(EtsIndex, NextKey, Accum) -> get_all_keys(EtsIndex, ets:next(EtsIndex, NextKey), [NextKey|Accum]).
