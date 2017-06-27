@@ -10,7 +10,7 @@
                 data_module,
                 reaper_pid, data_accessor, cache_size,
                 found = 0, launched = 0,
-                cache_policy, default_ttl,
+                cache_policy, ttl,
                 update_key_locks = #{} :: #{term() => pid()}}).
 
 -record(datum, {key, mgr, data, started, ttl_reaper,
@@ -46,7 +46,7 @@ init([Name, Mod, Fun, CacheSize, CacheTime, CachePolicy]) ->
                 table_pad = ets:info(DatumIndex, memory),
                 data_module = Mod,
                 data_accessor = Fun,
-                default_ttl = CacheTime,
+                ttl = CacheTime,
                 cache_policy = CachePolicy,
                 cache_size = if
                                  CacheSize =:= unlimited -> unlimited;
@@ -76,7 +76,7 @@ handle_call({generic_get, M, F, DatumKey}, From, #cache{datum_index = DatumIndex
                            end),
                      State;
                  Locks ->
-                     #cache{default_ttl = DefaultTTL, cache_policy = Policy} = State,
+                     #cache{ttl = DefaultTTL, cache_policy = Policy} = State,
                      State#cache{update_key_locks = Locks#{DatumKey => spawn(fun() ->
                                                                                  Data = launch_memoize_datum(DatumKey,
                                                                                                              DatumIndex,
@@ -92,7 +92,7 @@ handle_call({generic_get, M, F, DatumKey}, From, #cache{datum_index = DatumIndex
             spawn(fun() -> gen_server:cast(P, found) end),
             {reply, Data, State}
     end;
-handle_call({get, DatumKey}, From, #cache{datum_index = DatumIndex, data_module = DataModule, default_ttl = DefaultTTL,
+handle_call({get, DatumKey}, From, #cache{datum_index = DatumIndex, data_module = DataModule, ttl = DefaultTTL,
                                           cache_policy = Policy, data_accessor = DataAccessor} = State) ->
     P = self(),
     case fetch_data(key(DatumKey), DatumIndex) of
