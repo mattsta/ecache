@@ -26,37 +26,37 @@
 start_link(Name, Mod, Fun) -> start_link(Name, Mod, Fun, 8).
 
 % make 5 minute expiry cache
-start_link(Name, Mod, Fun, CacheSize) -> start_link(Name, Mod, Fun, CacheSize, 300000).
+start_link(Name, Mod, Fun, Size) -> start_link(Name, Mod, Fun, Size, 300000).
 
 % make MRU policy cache
-start_link(Name, Mod, Fun, CacheSize, CacheTime) -> start_link(Name, Mod, Fun, CacheSize, CacheTime, mru).
+start_link(Name, Mod, Fun, Size, Time) -> start_link(Name, Mod, Fun, Size, Time, mru).
 
-start_link(Name, Mod, Fun, CacheSize, CacheTime, Policy) ->
-    gen_server:start_link({local, Name}, ?MODULE, [Name, Mod, Fun, CacheSize, CacheTime, Policy], []).
+start_link(Name, Mod, Fun, Size, Time, Policy) ->
+    gen_server:start_link({local, Name}, ?MODULE, [Name, Mod, Fun, Size, Time, Policy], []).
 
 %%%----------------------------------------------------------------------
 %%% Callback functions from gen_server
 %%%----------------------------------------------------------------------
 
-init([Name, Mod, Fun, CacheSize, CacheTime, Policy]) ->
-    DatumIndex = ets:new(Name, [set, compressed,
-                                public,      % public because we spawn writers
-                                {keypos, #datum.key}, % use Key stored in record
-                                {read_concurrency, true}]),
+init([Name, Mod, Fun, Size, Time, Policy]) ->
+    Index = ets:new(Name, [set, compressed,
+                           public,      % public because we spawn writers
+                           {keypos, #datum.key}, % use Key stored in record
+                           {read_concurrency, true}]),
     init(#cache{name = Name,
-                datum_index = DatumIndex,
-                table_pad = ets:info(DatumIndex, memory),
+                datum_index = Index,
+                table_pad = ets:info(Index, memory),
                 data_module = Mod,
                 data_accessor = Fun,
-                ttl = CacheTime,
+                ttl = Time,
                 policy = Policy,
                 size = if
-                           CacheSize =:= unlimited -> unlimited;
-                           true -> CacheSize * (1024 * 1024)
+                           Size =:= unlimited -> unlimited;
+                           true -> Size * (1024 * 1024)
                        end});
 init(#cache{size = unlimited} = State) -> {ok, State};
-init(#cache{name = Name, size = CacheSizeBytes} = State) ->
-    {ok, Reaper} = ecache_reaper:start(Name, CacheSizeBytes),
+init(#cache{name = Name, size = SizeBytes} = State) ->
+    {ok, Reaper} = ecache_reaper:start(Name, SizeBytes),
     {ok, State#cache{reaper = erlang:monitor(process, Reaper)}}.
 
 handle_call({generic_get, M, F, Key}, From, #cache{datum_index = Index} = State) ->
@@ -116,26 +116,26 @@ handle_call({get, Key}, From, #cache{datum_index = Index} = State) ->
 % NB: total_size using ETS includes ETS overhead.  An empty table still
 % has a size.
 handle_call(total_size, _From, #cache{} = State) -> {reply, cache_bytes(State), State};
-handle_call(stats, _From, #cache{datum_index = DatumIndex, found = Found, launched = Launched} = State) ->
-    EtsInfo = ets:info(DatumIndex),
+handle_call(stats, _From, #cache{datum_index = Index, found = Found, launched = Launched} = State) ->
+    EtsInfo = ets:info(Index),
     {reply,
      [{cache_name, proplists:get_value(name, EtsInfo)},
       {memory_size_bytes, cache_bytes(State, proplists:get_value(memory, EtsInfo))},
       {datum_count, proplists:get_value(size, EtsInfo)},
       {found, Found}, {launched, Launched}],
      State};
-handle_call(empty, _From, #cache{datum_index = DatumIndex} = State) ->
+handle_call(empty, _From, #cache{datum_index = Index} = State) ->
     lists:foreach(fun([Reaper]) when is_pid(Reaper) -> exit(Reaper, kill);
                      (_) -> ok
-                  end, ets:match(DatumIndex, #datum{_ = '_', reaper = '$1'})),
-    ets:delete_all_objects(DatumIndex),
+                  end, ets:match(Index, #datum{_ = '_', reaper = '$1'})),
+    ets:delete_all_objects(Index),
     {reply, ok, State};
-handle_call(reap_oldest, _From, #cache{datum_index = DatumIndex} = State) ->
+handle_call(reap_oldest, _From, #cache{datum_index = Index} = State) ->
     DatumNow = #datum{last_active = os:timestamp()},
     LeastActive = ets:foldl(fun(#datum{last_active = LA} = A, #datum{last_active = Acc}) when LA < Acc -> A;
                                (_, Acc) -> Acc
-                            end, DatumNow, DatumIndex),
-    LeastActive =:= DatumNow orelse delete_object(DatumIndex, LeastActive),
+                            end, DatumNow, Index),
+    LeastActive =:= DatumNow orelse delete_object(Index, LeastActive),
     {reply, ok, State};
 handle_call({rand, Type, Count}, From, #cache{datum_index = Index} = State) ->
     spawn(fun() ->
@@ -156,17 +156,17 @@ handle_call({rand, Type, Count}, From, #cache{datum_index = Index} = State) ->
     {noreply, State};
 handle_call(Arbitrary, _From, State) -> {reply, {arbitrary, Arbitrary}, State}.
 
-handle_cast({dirty, Id, NewData}, #cache{datum_index = DatumIndex} = State) ->
-    replace_datum(key(Id), NewData, DatumIndex),
+handle_cast({dirty, Id, NewData}, #cache{datum_index = Index} = State) ->
+    replace_datum(key(Id), NewData, Index),
     {noreply, State};
 handle_cast(found, #cache{found = Found} = State) -> {noreply, State#cache{found = Found + 1}};
 handle_cast({launched, DatumKey}, #cache{launched = Launched, update_key_locks = Locks} = State) ->
     {noreply, State#cache{launched = Launched + 1, update_key_locks = maps:remove(DatumKey, Locks)}};
-handle_cast({dirty, Id}, #cache{datum_index = DatumIndex} = State) ->
-    delete_datum(DatumIndex, key(Id)),
+handle_cast({dirty, Id}, #cache{datum_index = Index} = State) ->
+    delete_datum(Index, key(Id)),
     {noreply, State};
-handle_cast({generic_dirty, M, F, A}, #cache{datum_index = DatumIndex} = State) ->
-    delete_datum(DatumIndex, key(M, F, A)),
+handle_cast({generic_dirty, M, F, A}, #cache{datum_index = Index} = State) ->
+    delete_datum(Index, key(M, F, A)),
     {noreply, State}.
 
 handle_info({destroy,_DatumPid, ok}, State) -> {noreply, State};
@@ -199,19 +199,19 @@ unkey({ecache_multi, {_, _, _} = MFA}) -> MFA.
 %% Private
 %% ===================================================================
 
-cache_bytes(#cache{datum_index = DatumIndex} = State) -> cache_bytes(State, ets:info(DatumIndex, memory)).
+cache_bytes(#cache{datum_index = Index} = State) -> cache_bytes(State, ets:info(Index, memory)).
 
 cache_bytes(#cache{table_pad = TabPad}, Mem) -> (Mem - TabPad) * erlang:system_info(wordsize).
 
-delete_datum(DatumIndex, Key) ->
-    case ets:take(DatumIndex, Key) of
+delete_datum(Index, Key) ->
+    case ets:take(Index, Key) of
         [#datum{reaper = Reaper}] when is_pid(Reaper) -> exit(Reaper, kill);
         _ -> true
     end.
 
-delete_object(DatumIndex, #datum{reaper = Reaper} = Datum) ->
+delete_object(Index, #datum{reaper = Reaper} = Datum) ->
     is_pid(Reaper) andalso exit(Reaper, kill),
-    ets:delete_object(DatumIndex, Datum).
+    ets:delete_object(Index, Datum).
 
 -compile({inline, [{create_datum, 4}]}).
 create_datum(DatumKey, Data, TTL, Type) ->
@@ -264,9 +264,9 @@ data_from_datum(#datum{data = Data}) -> Data.
 ping_reaper(Reaper, NewTTL) when is_pid(Reaper) -> Reaper ! {update_ttl, NewTTL};
 ping_reaper(_, _) -> ok.
 
-update_ttl(DatumIndex, #datum{key = Key, ttl = unlimited}) ->
-    ets:update_element(DatumIndex, Key, {#datum.last_active, os:timestamp()});
-update_ttl(DatumIndex, #datum{key = Key, started = Started, ttl = TTL, type = actual_time, reaper = Reaper}) ->
+update_ttl(Index, #datum{key = Key, ttl = unlimited}) ->
+    ets:update_element(Index, Key, {#datum.last_active, os:timestamp()});
+update_ttl(Index, #datum{key = Key, started = Started, ttl = TTL, type = actual_time, reaper = Reaper}) ->
     Timestamp = os:timestamp(),
     % Get total time in seconds this datum has been running.  Convert to ms.
     % If we are less than the TTL, update with TTL-used (TTL in ms too) else, we ran out of time.  expire on next loop.
@@ -275,21 +275,21 @@ update_ttl(DatumIndex, #datum{key = Key, started = Started, ttl = TTL, type = ac
                        _ -> 0
                    end,
     ping_reaper(Reaper, TTLRemaining),
-    ets:update_element(DatumIndex, Key, [{#datum.last_active, Timestamp}, {#datum.remaining_ttl, TTLRemaining}]);
-update_ttl(DatumIndex, #datum{key = Key, ttl = TTL, reaper = Reaper}) ->
+    ets:update_element(Index, Key, [{#datum.last_active, Timestamp}, {#datum.remaining_ttl, TTLRemaining}]);
+update_ttl(Index, #datum{key = Key, ttl = TTL, reaper = Reaper}) ->
     ping_reaper(Reaper, TTL),
-    ets:update_element(DatumIndex, Key, {#datum.last_active, os:timestamp()}).
+    ets:update_element(Index, Key, {#datum.last_active, os:timestamp()}).
 
-fetch_data(Key, DatumIndex) when is_tuple(Key) ->
-    case ets:lookup(DatumIndex, Key) of
+fetch_data(Key, Index) when is_tuple(Key) ->
+    case ets:lookup(Index, Key) of
         [Datum] ->
-            update_ttl(DatumIndex, Datum),
+            update_ttl(Index, Datum),
             data_from_datum(Datum);
         [] -> {ecache, notfound}
     end.
 
-replace_datum(Key, Data, DatumIndex) when is_tuple(Key) ->
-  ets:update_element(DatumIndex, Key, [{#datum.data, Data}, {#datum.last_active, os:timestamp()}]),
+replace_datum(Key, Data, Index) when is_tuple(Key) ->
+  ets:update_element(Index, Key, [{#datum.data, Data}, {#datum.last_active, os:timestamp()}]),
   Data.
 
 get_all_keys(EtsIndex) -> get_all_keys(EtsIndex, ets:first(EtsIndex), []).
