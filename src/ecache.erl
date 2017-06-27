@@ -1,10 +1,15 @@
 -module(ecache).
--compile(export_all).
 
--export([get/2, empty/1, total_size/1, stats/1, dirty/2, dirty/3, 
-         rand/2, rand_keys/2]).
+-export([cache_sup/4,
+         cache_ttl_sup/5]).
+-export([dirty/2, dirty/3,
+         dirty_memoize/4,
+         empty/1,
+         get/2,
+         memoize/4]).
+-export([stats/1, total_size/1]).
+-export([rand/2, rand_keys/2]).
 
--export([memoize/4, dirty_memoize/4]).
 -define(TIMEOUT, infinity).
 
 %% ===================================================================
