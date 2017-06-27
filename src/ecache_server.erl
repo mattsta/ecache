@@ -10,7 +10,7 @@
                 datum_index :: ets:tid(),
                 table_pad = 0 :: non_neg_integer(),
                 data_module :: module(),
-                reaper_pid :: undefined|pid(),
+                reaper :: undefined|pid(),
                 data_accessor :: atom(),
                 size :: unlimited|non_neg_integer(),
                 found = 0 :: non_neg_integer(),
@@ -56,10 +56,8 @@ init([Name, Mod, Fun, CacheSize, CacheTime, Policy]) ->
                        end});
 init(#cache{size = unlimited} = State) -> {ok, State};
 init(#cache{name = Name, size = CacheSizeBytes} = State) ->
-    {ok, State#cache{reaper_pid = begin
-                                  {ok, ReaperPid} = ecache_reaper:start(Name, CacheSizeBytes),
-                                  erlang:monitor(process, ReaperPid)
-                                  end}}.
+    {ok, Reaper} = ecache_reaper:start(Name, CacheSizeBytes),
+    {ok, State#cache{reaper = erlang:monitor(process, Reaper)}}.
 
 handle_call({generic_get, M, F, Key}, From, #cache{datum_index = Index} = State) ->
     P = self(),
@@ -172,10 +170,9 @@ handle_cast({generic_dirty, M, F, A}, #cache{datum_index = DatumIndex} = State) 
     {noreply, State}.
 
 handle_info({destroy,_DatumPid, ok}, State) -> {noreply, State};
-handle_info({'DOWN', _Ref, process, ReaperPid, _Reason},
-            #cache{reaper_pid = ReaperPid, name = Name, size = Size} = State) ->
-    {NewReaperPid, _Mon} = ecache_reaper:start_link(Name, Size),
-    {noreply, State#cache{reaper_pid = NewReaperPid}};
+handle_info({'DOWN', _Ref, process, Reaper, _Reason}, #cache{reaper = Reaper, name = Name, size = Size} = State) ->
+    {NewReaper, _Mon} = ecache_reaper:start_link(Name, Size),
+    {noreply, State#cache{reaper = NewReaper}};
 handle_info({'DOWN', _Ref, process, _Pid, _Reason}, State) -> {noreply, State};
 handle_info(Info, State) ->
     error_logger:info_report("Other info of: ~p~n", [Info]),
