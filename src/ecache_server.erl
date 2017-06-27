@@ -182,8 +182,8 @@ terminate(_Reason, _State) -> ok.
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
--compile({inline, [{key, 1}, {key, 3}]}).
--compile({inline, [{unkey, 1}]}).
+-compile({inline, [key/1, key/3]}).
+-compile({inline, [unkey/1]}).
 % keys are tagged/boxed so you can't cross-pollute a cache when using
 % memoize mode versus the normal one-key-per-arg mode.
 % Implication: *always* add key(Key) to keys from a user.  Don't pass user
@@ -213,7 +213,7 @@ delete_object(Index, #datum{reaper = Reaper} = Datum) ->
     is_pid(Reaper) andalso exit(Reaper, kill),
     ets:delete_object(Index, Datum).
 
--compile({inline, [{create_datum, 4}]}).
+-compile({inline, [create_datum/4]}).
 create_datum(DatumKey, Data, TTL, Type) ->
     Timestamp = os:timestamp(),
     #datum{key = DatumKey, data = Data, type = Type,
@@ -232,7 +232,7 @@ launch_datum_ttl_reaper(EtsIndex, Key, #datum{remaining_ttl = TTL} = Datum) ->
     Datum#datum{reaper = spawn_link(fun() -> reap_after(EtsIndex, Key, TTL) end)}.
 
 
--compile({inline, [{datum_error, 2}]}).
+-compile({inline, [datum_error/2]}).
 datum_error(How, What) -> {ecache_datum_error, {How, What}}.
 
 launch_datum(Key, EtsIndex, Module, Accessor, TTL, Policy) ->
@@ -257,10 +257,7 @@ launch_memoize_datum(Key, EtsIndex, Module, Accessor, TTL, Policy) ->
         How:What -> datum_error({How, What}, erlang:get_stacktrace())
     end.
 
--compile({inline, [{data_from_datum, 1}]}).
-data_from_datum(#datum{data = Data}) -> Data.
-
--compile({inline, [{ping_reaper, 2}]}).
+-compile({inline, [ping_reaper/2]}).
 ping_reaper(Reaper, NewTTL) when is_pid(Reaper) -> Reaper ! {update_ttl, NewTTL};
 ping_reaper(_, _) -> ok.
 
@@ -284,7 +281,7 @@ fetch_data(Key, Index) when is_tuple(Key) ->
     case ets:lookup(Index, Key) of
         [Datum] ->
             update_ttl(Index, Datum),
-            data_from_datum(Datum);
+            Datum#datum.data;
         [] -> {ecache, notfound}
     end.
 
