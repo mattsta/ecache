@@ -6,11 +6,17 @@
 -export([init/1, handle_call/3, handle_cast/2,
          handle_info/2, terminate/2, code_change/3]).
 
--record(cache, {name, datum_index, table_pad = 0,
-                data_module,
-                reaper_pid, data_accessor, size,
-                found = 0, launched = 0,
-                policy, ttl,
+-record(cache, {name :: atom(),
+                datum_index :: ets:tid(),
+                table_pad = 0 :: non_neg_integer(),
+                data_module :: module(),
+                reaper_pid :: undefined|pid(),
+                data_accessor :: atom(),
+                size :: unlimited|non_neg_integer(),
+                found = 0 :: non_neg_integer(),
+                launched = 0 :: non_neg_integer(),
+                policy = mru :: mru|actual_time,
+                ttl = unlimited :: unlimited|non_neg_integer(),
                 update_key_locks = #{} :: #{term() => pid()}}).
 
 -record(datum, {key, mgr, data, started, ttl_reaper,
@@ -55,66 +61,55 @@ init(#cache{name = Name, size = CacheSizeBytes} = State) ->
                                   erlang:monitor(process, ReaperPid)
                                   end}}.
 
-handle_call({generic_get, M, F, DatumKey}, From, #cache{datum_index = DatumIndex} = State) ->
+handle_call({generic_get, M, F, Key}, From, #cache{datum_index = Index} = State) ->
     P = self(),
-    case fetch_data(key(M, F, DatumKey), DatumIndex) of
+    case fetch_data(key(M, F, Key), Index) of
         {ecache, notfound} ->
-            Locks = State#cache.update_key_locks,
             {noreply,
              case State#cache.update_key_locks of
-                 #{DatumKey := CurrentLockPid} when is_pid(CurrentLockPid) ->
+                 #{Key := CurrentLockPid} when is_pid(CurrentLockPid) ->
                      spawn(fun() ->
                                Ref = monitor(process, CurrentLockPid),
                                receive
-                                   {'DOWN', Ref, process, _, _} ->
-                                       gen_server:reply(From, gen_server:call(P, {get, DatumKey}))
+                                   {'DOWN', Ref, process, _, _} -> gen_server:reply(From, gen_server:call(P, {get, Key}))
                                end
                            end),
                      State;
                  Locks ->
-                     #cache{ttl = DefaultTTL, policy = Policy} = State,
-                     State#cache{update_key_locks = Locks#{DatumKey => spawn(fun() ->
-                                                                                 Data = launch_memoize_datum(DatumKey,
-                                                                                                             DatumIndex,
-                                                                                                             M, F,
-                                                                                                             DefaultTTL,
-                                                                                                             Policy),
-                                                                                 gen_server:cast(P,
-                                                                                                 {launched, DatumKey}),
-                                                                                 gen_server:reply(From, Data)
-                                                                             end)}}
+                     #cache{ttl = TTL, policy = Policy} = State,
+                     State#cache{update_key_locks = Locks#{Key => spawn(fun() ->
+                                                                            Data = launch_memoize_datum(Key, Index, M, F,
+                                                                                                        TTL, Policy),
+                                                                            gen_server:cast(P, {launched, Key}),
+                                                                            gen_server:reply(From, Data)
+                                                                        end)}}
             end};
         Data ->
             spawn(fun() -> gen_server:cast(P, found) end),
             {reply, Data, State}
     end;
-handle_call({get, DatumKey}, From, #cache{datum_index = DatumIndex, data_module = DataModule, ttl = DefaultTTL,
-                                          policy = Policy, data_accessor = DataAccessor} = State) ->
+handle_call({get, Key}, From, #cache{datum_index = Index} = State) ->
     P = self(),
-    case fetch_data(key(DatumKey), DatumIndex) of
+    case fetch_data(key(Key), Index) of
         {ecache, notfound} ->
             {noreply,
              case State#cache.update_key_locks of
-                 #{DatumKey := CurrentLockPid} when is_pid(CurrentLockPid) ->
+                 #{Key := CurrentLockPid} when is_pid(CurrentLockPid) ->
                      spawn(fun() ->
                                Ref = erlang:monitor(process, CurrentLockPid),
                                receive
-                                   {'DOWN', Ref, process, _, _} ->
-                                       gen_server:reply(From, gen_server:call(P, {get, DatumKey}))
+                                   {'DOWN', Ref, process, _, _} -> gen_server:reply(From, gen_server:call(P, {get, Key}))
                                end
                            end),
                      State;
                  Locks ->
-                     State#cache{update_key_locks = Locks#{DatumKey => spawn(fun() ->
-                                                                                 Data = launch_datum(DatumKey,
-                                                                                                     DatumIndex,
-                                                                                                     DataModule,
-                                                                                                     DataAccessor,
-                                                                                                     DefaultTTL, Policy),
-                                                                                 gen_server:cast(P,
-                                                                                                 {launched, DatumKey}),
-                                                                                 gen_server:reply(From, Data)
-                                                                             end)}}
+                     #cache{data_module = Module, data_accessor = Accessor, ttl = TTL, policy = Policy} = State,
+                     State#cache{update_key_locks = Locks#{Key => spawn(fun() ->
+                                                                            Data = launch_datum(Key, Index, Module,
+                                                                                                Accessor, TTL, Policy),
+                                                                            gen_server:cast(P, {launched, Key}),
+                                                                            gen_server:reply(From, Data)
+                                                                        end)}}
              end};
         Data ->
             spawn(fun() -> gen_server:cast(P, found) end),
