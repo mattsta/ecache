@@ -1,12 +1,7 @@
 -module(ecache).
 
--export([cache_sup/4,
-         cache_ttl_sup/5]).
--export([dirty/2, dirty/3,
-         dirty_memoize/4,
-         empty/1,
-         get/2,
-         memoize/4]).
+-export([cache_sup/4, cache_ttl_sup/5]).
+-export([dirty/2, dirty/3, dirty_memoize/4, empty/1, get/2, memoize/4]).
 -export([stats/1, total_size/1]).
 -export([rand/2, rand_keys/2]).
 
@@ -17,46 +12,33 @@
 %% ===================================================================
 
 cache_sup(Name, Mod, Fun, Size) ->
-  {Name,
-    {ecache_server, start_link, [Name, Mod, Fun, Size]},
-     permanent, brutal_kill, worker, [ecache_server]}.
+    {Name, {ecache_server, start_link, [Name, Mod, Fun, Size]}, permanent, brutal_kill, worker, [ecache_server]}.
 
 cache_ttl_sup(Name, Mod, Fun, Size, TTL) ->
-  {Name,
-    {ecache_server, start_link, [Name, Mod, Fun, Size, TTL]},
-     permanent, brutal_kill, worker, [ecache_server]}.
+    {Name, {ecache_server, start_link, [Name, Mod, Fun, Size, TTL]}, permanent, brutal_kill, worker, [ecache_server]}.
 
 %% ===================================================================
 %% Calls into ecache_server
 %% ===================================================================
 
-get(ServerName, Key) ->
-  gen_server:call(ServerName, {get, Key}, ?TIMEOUT).
+get(Name, Key) -> gen_server:call(Name, {get, Key}, ?TIMEOUT).
 
 memoize(MemoizeCacheServer, Module, Fun, Key) ->
-  gen_server:call(MemoizeCacheServer, {generic_get, Module, Fun, Key},
-    ?TIMEOUT).
+    gen_server:call(MemoizeCacheServer, {generic_get, Module, Fun, Key}, ?TIMEOUT).
 
 dirty_memoize(MemoizeCacheServer, Module, Fun, Key) ->
-  gen_server:cast(MemoizeCacheServer, {generic_dirty, Module, Fun, Key}).
+    gen_server:cast(MemoizeCacheServer, {generic_dirty, Module, Fun, Key}).
 
-empty(RegisteredCacheServerName) ->
-  gen_server:call(RegisteredCacheServerName, empty).
+empty(Name) -> gen_server:call(Name, empty).
 
-total_size(ServerName) ->
-  gen_server:call(ServerName, total_size).
+total_size(Name) -> gen_server:call(Name, total_size).
 
-stats(ServerName) ->
-  gen_server:call(ServerName, stats).
+stats(Name) -> gen_server:call(Name, stats).
 
-dirty(ServerName, Key, NewData) ->
-  gen_server:cast(ServerName, {dirty, Key, NewData}).
+dirty(Name, Key, NewData) -> gen_server:cast(Name, {dirty, Key, NewData}).
 
-dirty(ServerName, Key) ->
-  gen_server:cast(ServerName, {dirty, Key}).
+dirty(Name, Key) -> gen_server:cast(Name, {dirty, Key}).
 
-rand(ServerName, Count) ->
-  gen_server:call(ServerName, {rand, data, Count}).
+rand(Name, Count) -> gen_server:call(Name, {rand, data, Count}).
 
-rand_keys(ServerName, Count) ->
-  gen_server:call(ServerName, {rand, keys, Count}).
+rand_keys(Name, Count) -> gen_server:call(Name, {rand, keys, Count}).
