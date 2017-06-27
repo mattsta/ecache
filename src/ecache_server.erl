@@ -8,35 +8,31 @@
 
 -record(cache, {name, datum_index, table_pad = 0,
                 data_module,
-                reaper_pid, data_accessor, cache_size,
+                reaper_pid, data_accessor, size,
                 found = 0, launched = 0,
-                cache_policy, ttl,
+                policy, ttl,
                 update_key_locks = #{} :: #{term() => pid()}}).
 
 -record(datum, {key, mgr, data, started, ttl_reaper,
                 last_active, ttl, type = mru, remaining_ttl}).
 
 % make 8 MB cache
-start_link(Name, Mod, Fun) ->
-  start_link(Name, Mod, Fun, 8).
+start_link(Name, Mod, Fun) -> start_link(Name, Mod, Fun, 8).
 
 % make 5 minute expiry cache
-start_link(Name, Mod, Fun, CacheSize) ->
-  start_link(Name, Mod, Fun, CacheSize, 300000).
+start_link(Name, Mod, Fun, CacheSize) -> start_link(Name, Mod, Fun, CacheSize, 300000).
 
 % make MRU policy cache
-start_link(Name, Mod, Fun, CacheSize, CacheTime) ->
-  start_link(Name, Mod, Fun, CacheSize, CacheTime, mru).
+start_link(Name, Mod, Fun, CacheSize, CacheTime) -> start_link(Name, Mod, Fun, CacheSize, CacheTime, mru).
 
-start_link(Name, Mod, Fun, CacheSize, CacheTime, CachePolicy) ->
-  gen_server:start_link({local, Name}, 
-    ?MODULE, [Name, Mod, Fun, CacheSize, CacheTime, CachePolicy], []).
+start_link(Name, Mod, Fun, CacheSize, CacheTime, Policy) ->
+    gen_server:start_link({local, Name}, ?MODULE, [Name, Mod, Fun, CacheSize, CacheTime, Policy], []).
 
 %%%----------------------------------------------------------------------
 %%% Callback functions from gen_server
 %%%----------------------------------------------------------------------
 
-init([Name, Mod, Fun, CacheSize, CacheTime, CachePolicy]) ->
+init([Name, Mod, Fun, CacheSize, CacheTime, Policy]) ->
     DatumIndex = ets:new(Name, [set, compressed,
                                 public,      % public because we spawn writers
                                 {keypos, #datum.key}, % use Key stored in record
@@ -47,13 +43,13 @@ init([Name, Mod, Fun, CacheSize, CacheTime, CachePolicy]) ->
                 data_module = Mod,
                 data_accessor = Fun,
                 ttl = CacheTime,
-                cache_policy = CachePolicy,
-                cache_size = if
-                                 CacheSize =:= unlimited -> unlimited;
-                                 true -> CacheSize * (1024 * 1024)
-                             end});
-init(#cache{cache_size = unlimited} = State) -> {ok, State};
-init(#cache{name = Name, cache_size = CacheSizeBytes} = State) ->
+                policy = Policy,
+                size = if
+                           CacheSize =:= unlimited -> unlimited;
+                           true -> CacheSize * (1024 * 1024)
+                       end});
+init(#cache{size = unlimited} = State) -> {ok, State};
+init(#cache{name = Name, size = CacheSizeBytes} = State) ->
     {ok, State#cache{reaper_pid = begin
                                   {ok, ReaperPid} = ecache_reaper:start(Name, CacheSizeBytes),
                                   erlang:monitor(process, ReaperPid)
@@ -76,7 +72,7 @@ handle_call({generic_get, M, F, DatumKey}, From, #cache{datum_index = DatumIndex
                            end),
                      State;
                  Locks ->
-                     #cache{ttl = DefaultTTL, cache_policy = Policy} = State,
+                     #cache{ttl = DefaultTTL, policy = Policy} = State,
                      State#cache{update_key_locks = Locks#{DatumKey => spawn(fun() ->
                                                                                  Data = launch_memoize_datum(DatumKey,
                                                                                                              DatumIndex,
@@ -93,7 +89,7 @@ handle_call({generic_get, M, F, DatumKey}, From, #cache{datum_index = DatumIndex
             {reply, Data, State}
     end;
 handle_call({get, DatumKey}, From, #cache{datum_index = DatumIndex, data_module = DataModule, ttl = DefaultTTL,
-                                          cache_policy = Policy, data_accessor = DataAccessor} = State) ->
+                                          policy = Policy, data_accessor = DataAccessor} = State) ->
     P = self(),
     case fetch_data(key(DatumKey), DatumIndex) of
         {ecache, notfound} ->
@@ -186,7 +182,7 @@ handle_cast({generic_dirty, M, F, A}, #cache{datum_index = DatumIndex} = State) 
 
 handle_info({destroy,_DatumPid, ok}, State) -> {noreply, State};
 handle_info({'DOWN', _Ref, process, ReaperPid, _Reason},
-            #cache{reaper_pid = ReaperPid, name = Name, cache_size = Size} = State) ->
+            #cache{reaper_pid = ReaperPid, name = Name, size = Size} = State) ->
     {NewReaperPid, _Mon} = ecache_reaper:start_link(Name, Size),
     {noreply, State#cache{reaper_pid = NewReaperPid}};
 handle_info({'DOWN', _Ref, process, _Pid, _Reason}, State) -> {noreply, State};
@@ -253,30 +249,29 @@ launch_datum_ttl_reaper(EtsIndex, Key, #datum{remaining_ttl = TTL} = Datum) ->
 -compile({inline, [{datum_error, 2}]}).
 datum_error(How, What) -> {ecache_datum_error, {How, What}}.
 
-launch_datum(Key, EtsIndex, Module, Accessor, TTL, CachePolicy) ->
-  try Module:Accessor(Key) of
-    CacheData -> UseKey = key(Key),
-                 Datum = create_datum(UseKey, CacheData, TTL, CachePolicy),
-                 LaunchedDatum =
-                   launch_datum_ttl_reaper(EtsIndex, UseKey, Datum),
-                 ets:insert(EtsIndex, LaunchedDatum),
-                 CacheData
-  catch
-    How:What -> datum_error({How, What}, erlang:get_stacktrace())
-  end.
+launch_datum(Key, EtsIndex, Module, Accessor, TTL, Policy) ->
+    try Module:Accessor(Key) of
+        CacheData ->
+            UseKey = key(Key),
+            Datum = create_datum(UseKey, CacheData, TTL, Policy),
+            LaunchedDatum = launch_datum_ttl_reaper(EtsIndex, UseKey, Datum),
+            ets:insert(EtsIndex, LaunchedDatum),
+            CacheData
+    catch
+        How:What -> datum_error({How, What}, erlang:get_stacktrace())
+    end.
 
-launch_memoize_datum(Key, EtsIndex, Module, Accessor, TTL, CachePolicy) ->
-  try Module:Accessor(Key) of
-    CacheData -> UseKey = key(Module, Accessor, Key),
-                 Datum = create_datum(UseKey, CacheData, TTL, CachePolicy),
-                 LaunchedDatum =
-                   launch_datum_ttl_reaper(EtsIndex, UseKey, Datum),
-                 ets:insert(EtsIndex, LaunchedDatum),
-                 CacheData
-  catch
-    How:What -> datum_error({How, What}, erlang:get_stacktrace())
-  end.
-
+launch_memoize_datum(Key, EtsIndex, Module, Accessor, TTL, Policy) ->
+    try Module:Accessor(Key) of
+        CacheData ->
+            UseKey = key(Module, Accessor, Key),
+            Datum = create_datum(UseKey, CacheData, TTL, Policy),
+            LaunchedDatum = launch_datum_ttl_reaper(EtsIndex, UseKey, Datum),
+            ets:insert(EtsIndex, LaunchedDatum),
+            CacheData
+    catch
+        How:What -> datum_error({How, What}, erlang:get_stacktrace())
+    end.
 
 -compile({inline, [{data_from_datum, 1}]}).
 data_from_datum(#datum{data = Data}) -> Data.
