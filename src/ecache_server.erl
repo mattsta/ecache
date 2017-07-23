@@ -19,8 +19,15 @@
                 ttl = unlimited :: unlimited|non_neg_integer(),
                 update_key_locks = #{} :: #{term() => pid()}}).
 
--record(datum, {key, mgr, data, started, reaper,
-                last_active, ttl, type = mru, remaining_ttl}).
+-record(datum, {key :: term(),
+                mgr, % ???
+                data :: term(),
+                started :: erlang:timestamp(),
+                reaper :: undefined|pid(),
+                last_active :: erlang:timestamp(),
+                ttl = unlimited:: unlimited|non_neg_integer(),
+                type = mru :: mru|actual_time,
+                remaining_ttl = unlimited:: unlimited|non_neg_integer()}).
 
 % make 8 MB cache
 start_link(Name, Mod, Fun) -> start_link(Name, Mod, Fun, 8).
