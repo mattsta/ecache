@@ -12,7 +12,7 @@
                 data_module :: module(),
                 reaper :: undefined|pid(),
                 data_accessor :: atom(),
-                size :: unlimited|non_neg_integer(),
+                size = unlimited :: unlimited|non_neg_integer(),
                 found = 0 :: non_neg_integer(),
                 launched = 0 :: non_neg_integer(),
                 policy = mru :: mru|actual_time,
@@ -38,26 +38,24 @@ start_link(Name, Mod, Fun, Size, Time, Policy) ->
 %%% Callback functions from gen_server
 %%%----------------------------------------------------------------------
 
-init([Name, Mod, Fun, Size, Time, Policy]) ->
-    Index = ets:new(Name, [set, compressed,
-                           public,      % public because we spawn writers
-                           {keypos, #datum.key}, % use Key stored in record
+init([Name, Mod, Fun, Size, Time, Policy]) when is_atom(Mod), is_atom(Fun), is_atom(Policy),
+                                                Time =:= unlimited orelse is_integer(Time) andalso Time > 0 ->
+    Index = ets:new(Name, [set, compressed, public, % public because we spawn writers
+                           {keypos, #datum.key},    % use Key stored in record
                            {read_concurrency, true}]),
     init(#cache{name = Name,
                 datum_index = Index,
                 table_pad = ets:info(Index, memory),
                 data_module = Mod,
                 data_accessor = Fun,
-                ttl = Time,
+                size = Size,
                 policy = Policy,
-                size = if
-                           Size =:= unlimited -> unlimited;
-                           true -> Size * (1024 * 1024)
-                       end});
+                ttl = Time});
 init(#cache{size = unlimited} = State) -> {ok, State};
-init(#cache{name = Name, size = SizeBytes} = State) ->
+init(#cache{name = Name, size = Size} = State) when is_integer(Size), Size > 0 ->
+    SizeBytes = Size * (1024 * 1024),
     {ok, Reaper} = ecache_reaper:start(Name, SizeBytes),
-    {ok, State#cache{reaper = erlang:monitor(process, Reaper)}}.
+    {ok, State#cache{reaper = erlang:monitor(process, Reaper), size = SizeBytes}}.
 
 handle_call({generic_get, M, F, Key}, From, #cache{datum_index = Index} = State) ->
     P = self(),
