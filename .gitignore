@@ -1,5 +1,5 @@
-.rebar/*
-ebin/
+/.rebar
+/ebin
 tags
-.eunit/
-*.beam
+/.eunit
+/doc
