@@ -64,7 +64,7 @@ init(#cache{name = Name, size = Size} = State) when is_integer(Size), Size > 0 -
     {ok, Reaper} = ecache_reaper:start(Name, SizeBytes),
     {ok, State#cache{reaper = erlang:monitor(process, Reaper), size = SizeBytes}}.
 
-handle_call({generic_get, M, F, Key}, From, #cache{datum_index = Index} = State) ->
+handle_call({generic_get, M, F, Key} = R, From, #cache{datum_index = Index} = State) ->
     P = self(),
     case fetch_data(key(M, F, Key), Index) of
         {ecache, notfound} ->
@@ -74,7 +74,7 @@ handle_call({generic_get, M, F, Key}, From, #cache{datum_index = Index} = State)
                      spawn(fun() ->
                                Ref = monitor(process, CurrentLockPid),
                                receive
-                                   {'DOWN', Ref, process, _, _} -> gen_server:reply(From, gen_server:call(P, {get, Key}))
+                                   {'DOWN', Ref, process, _, _} -> gen_server:reply(From, gen_server:call(P, R))
                                end
                            end),
                      State;
@@ -88,10 +88,10 @@ handle_call({generic_get, M, F, Key}, From, #cache{datum_index = Index} = State)
                                                                         end)}}
             end};
         Data ->
-            spawn(fun() -> gen_server:cast(P, found) end),
+            spawn(gen_server, cast, [P, found]),
             {reply, Data, State}
     end;
-handle_call({get, Key}, From, #cache{datum_index = Index} = State) ->
+handle_call({get, Key} = R, From, #cache{datum_index = Index} = State) ->
     P = self(),
     case fetch_data(key(Key), Index) of
         {ecache, notfound} ->
@@ -101,7 +101,7 @@ handle_call({get, Key}, From, #cache{datum_index = Index} = State) ->
                      spawn(fun() ->
                                Ref = erlang:monitor(process, CurrentLockPid),
                                receive
-                                   {'DOWN', Ref, process, _, _} -> gen_server:reply(From, gen_server:call(P, {get, Key}))
+                                   {'DOWN', Ref, process, _, _} -> gen_server:reply(From, gen_server:call(P, R))
                                end
                            end),
                      State;
@@ -115,7 +115,7 @@ handle_call({get, Key}, From, #cache{datum_index = Index} = State) ->
                                                                         end)}}
              end};
         Data ->
-            spawn(fun() -> gen_server:cast(P, found) end),
+            spawn(gen_server, cast, [P, found]),
             {reply, Data, State}
     end;
 % NB: total_size using ETS includes ETS overhead.  An empty table still
