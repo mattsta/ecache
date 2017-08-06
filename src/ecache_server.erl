@@ -64,60 +64,9 @@ init(#cache{name = Name, size = Size} = State) when is_integer(Size), Size > 0 -
     {ok, Reaper} = ecache_reaper:start(Name, SizeBytes),
     {ok, State#cache{reaper = erlang:monitor(process, Reaper), size = SizeBytes}}.
 
-handle_call({generic_get, M, F, Key} = R, From, #cache{datum_index = Index} = State) ->
-    P = self(),
-    case fetch_data(key(M, F, Key), Index) of
-        {ecache, notfound} ->
-            {noreply,
-             case State#cache.update_key_locks of
-                 #{Key := CurrentLockPid} when is_pid(CurrentLockPid) ->
-                     spawn(fun() ->
-                               Ref = monitor(process, CurrentLockPid),
-                               receive
-                                   {'DOWN', Ref, process, _, _} -> gen_server:reply(From, gen_server:call(P, R))
-                               end
-                           end),
-                     State;
-                 Locks ->
-                     #cache{ttl = TTL, policy = Policy} = State,
-                     State#cache{update_key_locks = Locks#{Key => spawn(fun() ->
-                                                                            Data = launch_memoize_datum(Key, Index, M, F,
-                                                                                                        TTL, Policy),
-                                                                            gen_server:cast(P, {launched, Key}),
-                                                                            gen_server:reply(From, Data)
-                                                                        end)}}
-            end};
-        Data ->
-            spawn(gen_server, cast, [P, found]),
-            {reply, Data, State}
-    end;
-handle_call({get, Key} = R, From, #cache{datum_index = Index} = State) ->
-    P = self(),
-    case fetch_data(key(Key), Index) of
-        {ecache, notfound} ->
-            {noreply,
-             case State#cache.update_key_locks of
-                 #{Key := CurrentLockPid} when is_pid(CurrentLockPid) ->
-                     spawn(fun() ->
-                               Ref = erlang:monitor(process, CurrentLockPid),
-                               receive
-                                   {'DOWN', Ref, process, _, _} -> gen_server:reply(From, gen_server:call(P, R))
-                               end
-                           end),
-                     State;
-                 Locks ->
-                     #cache{data_module = Module, data_accessor = Accessor, ttl = TTL, policy = Policy} = State,
-                     State#cache{update_key_locks = Locks#{Key => spawn(fun() ->
-                                                                            Data = launch_datum(Key, Index, Module,
-                                                                                                Accessor, TTL, Policy),
-                                                                            gen_server:cast(P, {launched, Key}),
-                                                                            gen_server:reply(From, Data)
-                                                                        end)}}
-             end};
-        Data ->
-            spawn(gen_server, cast, [P, found]),
-            {reply, Data, State}
-    end;
+handle_call({get, Key} = R, From, #cache{data_module = M, data_accessor = F} = State) ->
+    generic_get(R, From, State, key(Key), M, F, Key);
+handle_call({generic_get, M, F, Key} = R, From, State) -> generic_get(R, From, State, key(M, F, Key), M, F, Key);
 % NB: total_size using ETS includes ETS overhead.  An empty table still
 % has a size.
 handle_call(total_size, _From, #cache{} = State) -> {reply, cache_bytes(State), State};
@@ -207,6 +156,7 @@ unkey({ecache_multi, {_, _, _} = MFA}) -> MFA.
 cache_bytes(#cache{datum_index = Index} = State) -> cache_bytes(State, ets:info(Index, memory)).
 
 cache_bytes(#cache{table_pad = TabPad}, Mem) -> (Mem - TabPad) * erlang:system_info(wordsize).
+-compile({inline, [cache_bytes/2]}).
 
 delete_datum(Index, Key) ->
     case ets:take(Index, Key) of
@@ -224,39 +174,24 @@ create_datum(DatumKey, Data, TTL, Type) ->
     #datum{key = DatumKey, data = Data, type = Type,
            started = Timestamp, ttl = TTL, remaining_ttl = TTL, last_active = Timestamp}.
 
-reap_after(EtsIndex, Key, LifeTTL) ->
+reap_after(Index, Key, LifeTTL) ->
     receive
-        {update_ttl, NewTTL} -> reap_after(EtsIndex, Key, NewTTL)
-    after LifeTTL ->
-        ets:delete(EtsIndex, Key),
-        exit(self(), kill)
+        {update_ttl, NewTTL} -> reap_after(Index, Key, NewTTL)
+    after LifeTTL -> ets:delete(Index, Key)
     end.
 
 launch_datum_ttl_reaper(_, _, #datum{remaining_ttl = unlimited} = Datum) -> Datum;
-launch_datum_ttl_reaper(EtsIndex, Key, #datum{remaining_ttl = TTL} = Datum) ->
-    Datum#datum{reaper = spawn_link(fun() -> reap_after(EtsIndex, Key, TTL) end)}.
+launch_datum_ttl_reaper(Index, Key, #datum{remaining_ttl = TTL} = Datum) ->
+    Datum#datum{reaper = spawn_link(fun() -> reap_after(Index, Key, TTL) end)}.
 
 
 -compile({inline, [datum_error/2]}).
 datum_error(How, What) -> {ecache_datum_error, {How, What}}.
 
-launch_datum(Key, EtsIndex, Module, Accessor, TTL, Policy) ->
+launch_datum(Key, Index, Module, Accessor, TTL, Policy, UseKey) ->
     try Module:Accessor(Key) of
         CacheData ->
-            UseKey = key(Key),
-            ets:insert(EtsIndex,
-                       launch_datum_ttl_reaper(EtsIndex, UseKey, create_datum(UseKey, CacheData, TTL, Policy))),
-            CacheData
-    catch
-        How:What -> datum_error({How, What}, erlang:get_stacktrace())
-    end.
-
-launch_memoize_datum(Key, EtsIndex, Module, Accessor, TTL, Policy) ->
-    try Module:Accessor(Key) of
-        CacheData ->
-            UseKey = key(Module, Accessor, Key),
-            ets:insert(EtsIndex,
-                       launch_datum_ttl_reaper(EtsIndex, UseKey, create_datum(UseKey, CacheData, TTL, Policy))),
+            ets:insert(Index, launch_datum_ttl_reaper(Index, UseKey, create_datum(UseKey, CacheData, TTL, Policy))),
             CacheData
     catch
         How:What -> datum_error({How, What}, erlang:get_stacktrace())
@@ -284,17 +219,44 @@ update_ttl(Index, #datum{key = Key, ttl = TTL, reaper = Reaper}) ->
 
 fetch_data(Key, Index) when is_tuple(Key) ->
     case ets:lookup(Index, Key) of
-        [Datum] ->
+        [#datum{data = Data} = Datum] ->
             update_ttl(Index, Datum),
-            Datum#datum.data;
+            Data;
         [] -> {ecache, notfound}
     end.
 
 replace_datum(Key, Data, Index) when is_tuple(Key) ->
-  ets:update_element(Index, Key, [{#datum.data, Data}, {#datum.last_active, os:timestamp()}]),
-  Data.
+    ets:update_element(Index, Key, [{#datum.data, Data}, {#datum.last_active, os:timestamp()}]).
 
-get_all_keys(EtsIndex) -> get_all_keys(EtsIndex, ets:first(EtsIndex), []).
+get_all_keys(Index) -> get_all_keys(Index, [ets:first(Index)]).
 
-get_all_keys(_, '$end_of_table', Accum) -> Accum;
-get_all_keys(EtsIndex, NextKey, Accum) -> get_all_keys(EtsIndex, ets:next(EtsIndex, NextKey), [NextKey|Accum]).
+get_all_keys(_, ['$end_of_table'|Acc]) -> Acc;
+get_all_keys(Index, [Key|_] = Acc) -> get_all_keys(Index, [ets:next(Index, Key)|Acc]).
+
+generic_get(R, From, #cache{datum_index = Index} = State, UseKey, M, F, Key) ->
+    P = self(),
+    case fetch_data(UseKey, Index) of
+        {ecache, notfound} ->
+            {noreply,
+             case State#cache.update_key_locks of
+                 #{Key := CurrentLockPid} when is_pid(CurrentLockPid) ->
+                     spawn(fun() ->
+                               Ref = monitor(process, CurrentLockPid),
+                               receive
+                                   {'DOWN', Ref, process, _, _} -> gen_server:reply(From, gen_server:call(P, R))
+                               end
+                           end),
+                     State;
+                 Locks ->
+                     #cache{ttl = TTL, policy = Policy} = State,
+                     State#cache{update_key_locks = Locks#{Key => spawn(fun() ->
+                                                                            Data = launch_datum(Key, Index, M, F, TTL,
+                                                                                                Policy, UseKey),
+                                                                            gen_server:cast(P, {launched, Key}),
+                                                                            gen_server:reply(From, Data)
+                                                                        end)}}
+            end};
+        Data ->
+            spawn(gen_server, cast, [P, found]),
+            {reply, Data, State}
+    end.
