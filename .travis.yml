@@ -2,6 +2,7 @@ language: erlang
 notifications:
   email: false
 otp_release:
-  - 20.0
+  - 20.1
   - 19.3
   - 18.3
+script: rebar compile && rebar eunit -v
