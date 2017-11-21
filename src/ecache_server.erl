@@ -239,7 +239,7 @@ generic_get(R, From, #cache{datum_index = Index} = State, UseKey, M, F, Key) ->
         {ecache, notfound} ->
             {noreply,
              case State#cache.update_key_locks of
-                 #{Key := CurrentLockPid} when is_pid(CurrentLockPid) ->
+                 #{UseKey := CurrentLockPid} when is_pid(CurrentLockPid) ->
                      spawn(fun() ->
                                Ref = monitor(process, CurrentLockPid),
                                receive
@@ -249,12 +249,12 @@ generic_get(R, From, #cache{datum_index = Index} = State, UseKey, M, F, Key) ->
                      State;
                  Locks ->
                      #cache{ttl = TTL, policy = Policy} = State,
-                     State#cache{update_key_locks = Locks#{Key => spawn(fun() ->
-                                                                            Data = launch_datum(Key, Index, M, F, TTL,
-                                                                                                Policy, UseKey),
-                                                                            gen_server:cast(P, {launched, Key}),
-                                                                            gen_server:reply(From, Data)
-                                                                        end)}}
+                     State#cache{update_key_locks = Locks#{UseKey => spawn(fun() ->
+                                                                               Data = launch_datum(Key, Index, M, F, TTL,
+                                                                                                   Policy, UseKey),
+                                                                               gen_server:cast(P, {launched, Key}),
+                                                                               gen_server:reply(From, Data)
+                                                                           end)}}
             end};
         Data ->
             spawn(gen_server, cast, [P, found]),
