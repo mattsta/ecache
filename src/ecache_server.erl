@@ -252,7 +252,7 @@ generic_get(R, From, #cache{datum_index = Index} = State, UseKey, M, F, Key) ->
                      State#cache{update_key_locks = Locks#{UseKey => spawn(fun() ->
                                                                                Data = launch_datum(Key, Index, M, F, TTL,
                                                                                                    Policy, UseKey),
-                                                                               gen_server:cast(P, {launched, Key}),
+                                                                               gen_server:cast(P, {launched, UseKey}),
                                                                                gen_server:reply(From, Data)
                                                                            end)}}
             end};
