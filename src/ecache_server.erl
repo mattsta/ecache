@@ -70,13 +70,15 @@ handle_call({generic_get, M, F, Key} = R, From, State) -> generic_get(R, From, S
 % NB: total_size using ETS includes ETS overhead.  An empty table still
 % has a size.
 handle_call(total_size, _From, #cache{} = State) -> {reply, cache_bytes(State), State};
-handle_call(stats, _From, #cache{datum_index = Index, found = Found, launched = Launched} = State) ->
+handle_call(stats, _From, #cache{datum_index = Index,
+                                 found = Found, launched = Launched, policy = Policy, ttl = TTL} = State) ->
     EtsInfo = ets:info(Index),
     {reply,
      [{cache_name, proplists:get_value(name, EtsInfo)},
       {memory_size_bytes, cache_bytes(State, proplists:get_value(memory, EtsInfo))},
       {datum_count, proplists:get_value(size, EtsInfo)},
-      {found, Found}, {launched, Launched}],
+      {found, Found}, {launched, Launched},
+      {policy, Policy}, {ttl, TTL}],
      State};
 handle_call(empty, _From, #cache{datum_index = Index} = State) ->
     lists:foreach(fun([Reaper]) when is_pid(Reaper) -> exit(Reaper, kill);
