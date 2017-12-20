@@ -67,8 +67,6 @@ init(#cache{name = Name, size = Size} = State) when is_integer(Size), Size > 0 -
 handle_call({get, Key} = R, From, #cache{data_module = M, data_accessor = F} = State) ->
     generic_get(R, From, State, key(Key), M, F, Key);
 handle_call({generic_get, M, F, Key} = R, From, State) -> generic_get(R, From, State, key(M, F, Key), M, F, Key);
-% NB: total_size using ETS includes ETS overhead.  An empty table still
-% has a size.
 handle_call(total_size, _From, #cache{} = State) -> {reply, cache_bytes(State), State};
 handle_call(stats, _From, #cache{datum_index = Index,
                                  found = Found, launched = Launched, policy = Policy, ttl = TTL} = State) ->
