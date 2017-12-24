@@ -115,7 +115,6 @@ handle_call(Arbitrary, _From, State) -> {reply, {arbitrary, Arbitrary}, State}.
 handle_cast({dirty, Id, NewData}, #cache{datum_index = Index} = State) ->
     replace_datum(key(Id), NewData, Index),
     {noreply, State};
-handle_cast(found, #cache{found = Found} = State) -> {noreply, State#cache{found = Found + 1}};
 handle_cast(launched, #cache{launched = Launched} = State) -> {noreply, State#cache{launched = Launched + 1}};
 handle_cast({dirty, Id}, #cache{datum_index = Index} = State) ->
     delete_datum(Index, key(Id)),
@@ -238,22 +237,20 @@ get_all_keys(Index, [Key|_] = Acc) -> get_all_keys(Index, [ets:next(Index, Key)|
 generic_get(R, From, #cache{datum_index = Index} = State, UseKey, M, F, Key) ->
     P = self(),
     case fetch_data(UseKey, Index) of
-        {ok, Data} ->
-            spawn(gen_server, cast, [P, found]),
-            {reply, Data, State};
+        {ok, Data} -> {reply, Data, State#cache{found = State#cache.found + 1}};
         {ecache, notfound} ->
             #cache{ttl = TTL, policy = Policy} = State,
-            ets:insert(Index, #datum{key = UseKey,
-                                     mgr = spawn(fun() ->
-                                                     gen_server:reply(From,
-                                                                      case launch_datum(Key, Index, M, F,
-                                                                                        TTL, Policy, UseKey) of
-                                                                          {ok, Data} ->
-                                                                              gen_server:cast(P, launched),
-                                                                              Data;
-                                                                          Error -> Error
-                                                                      end)
-                                                 end)}),
+            ets:insert(Index,
+                       #datum{key = UseKey,
+                              mgr = spawn(fun() ->
+                                              gen_server:reply(From,
+                                                               case launch_datum(Key, Index, M, F, TTL, Policy, UseKey) of
+                                                                   {ok, Data} ->
+                                                                       gen_server:cast(P, launched),
+                                                                       Data;
+                                                                   Error -> Error
+                                                               end)
+                                          end)}),
             {noreply, State};
         {ecache, LockPid} when is_pid(LockPid) ->
             spawn(fun() ->
