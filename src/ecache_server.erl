@@ -16,8 +16,7 @@
                 found = 0 :: non_neg_integer(),
                 launched = 0 :: non_neg_integer(),
                 policy = mru :: mru|actual_time,
-                ttl = unlimited :: unlimited|non_neg_integer(),
-                update_key_locks = #{} :: #{term() => pid()}}).
+                ttl = unlimited :: unlimited|non_neg_integer()}).
 
 -record(datum, {key :: term(),
                 mgr, % ???
@@ -97,7 +96,10 @@ handle_call({rand, Type, Count}, From, #cache{datum_index = Index} = State) ->
               Length = length(AllKeys),
               gen_server:reply(From,
                                lists:map(if
-                                             Type =:= data -> fun(K) -> fetch_data(K, Index) end;
+                                             Type =:= data -> fun(K) ->
+                                                                  {ok, Data} = fetch_data(K, Index),
+                                                                  Data
+                                                              end;
                                              Type =:= keys -> fun unkey/1
                                          end,
                                          if
@@ -114,8 +116,7 @@ handle_cast({dirty, Id, NewData}, #cache{datum_index = Index} = State) ->
     replace_datum(key(Id), NewData, Index),
     {noreply, State};
 handle_cast(found, #cache{found = Found} = State) -> {noreply, State#cache{found = Found + 1}};
-handle_cast({launched, DatumKey}, #cache{launched = Launched, update_key_locks = Locks} = State) ->
-    {noreply, State#cache{launched = Launched + 1, update_key_locks = maps:remove(DatumKey, Locks)}};
+handle_cast(launched, #cache{launched = Launched} = State) -> {noreply, State#cache{launched = Launched + 1}};
 handle_cast({dirty, Id}, #cache{datum_index = Index} = State) ->
     delete_datum(Index, key(Id)),
     {noreply, State};
@@ -192,7 +193,7 @@ launch_datum(Key, Index, Module, Accessor, TTL, Policy, UseKey) ->
     try Module:Accessor(Key) of
         CacheData ->
             ets:insert(Index, launch_datum_ttl_reaper(Index, UseKey, create_datum(UseKey, CacheData, TTL, Policy))),
-            CacheData
+            {ok, CacheData}
     catch
         How:What -> datum_error({How, What}, erlang:get_stacktrace())
     end.
@@ -219,9 +220,10 @@ update_ttl(Index, #datum{key = Key, ttl = TTL, reaper = Reaper}) ->
 
 fetch_data(Key, Index) when is_tuple(Key) ->
     case ets:lookup(Index, Key) of
-        [#datum{data = Data} = Datum] ->
+        [#datum{mgr = undefined, data = Data} = Datum] ->
             update_ttl(Index, Datum),
-            Data;
+            {ok, Data};
+        [#datum{mgr = P}] when is_pid(P) -> {ecache, P};
         [] -> {ecache, notfound}
     end.
 
@@ -236,27 +238,29 @@ get_all_keys(Index, [Key|_] = Acc) -> get_all_keys(Index, [ets:next(Index, Key)|
 generic_get(R, From, #cache{datum_index = Index} = State, UseKey, M, F, Key) ->
     P = self(),
     case fetch_data(UseKey, Index) of
-        {ecache, notfound} ->
-            {noreply,
-             case State#cache.update_key_locks of
-                 #{UseKey := CurrentLockPid} when is_pid(CurrentLockPid) ->
-                     spawn(fun() ->
-                               Ref = monitor(process, CurrentLockPid),
-                               receive
-                                   {'DOWN', Ref, process, _, _} -> gen_server:reply(From, gen_server:call(P, R))
-                               end
-                           end),
-                     State;
-                 Locks ->
-                     #cache{ttl = TTL, policy = Policy} = State,
-                     State#cache{update_key_locks = Locks#{UseKey => spawn(fun() ->
-                                                                               Data = launch_datum(Key, Index, M, F, TTL,
-                                                                                                   Policy, UseKey),
-                                                                               gen_server:cast(P, {launched, UseKey}),
-                                                                               gen_server:reply(From, Data)
-                                                                           end)}}
-            end};
-        Data ->
+        {ok, Data} ->
             spawn(gen_server, cast, [P, found]),
-            {reply, Data, State}
+            {reply, Data, State};
+        {ecache, notfound} ->
+            #cache{ttl = TTL, policy = Policy} = State,
+            ets:insert(Index, #datum{key = UseKey,
+                                     mgr = spawn(fun() ->
+                                                     gen_server:reply(From,
+                                                                      case launch_datum(Key, Index, M, F,
+                                                                                        TTL, Policy, UseKey) of
+                                                                          {ok, Data} ->
+                                                                              gen_server:cast(P, launched),
+                                                                              Data;
+                                                                          Error -> Error
+                                                                      end)
+                                                 end)}),
+            {noreply, State};
+        {ecache, LockPid} when is_pid(LockPid) ->
+            spawn(fun() ->
+                      Ref = monitor(process, LockPid),
+                      receive
+                          {'DOWN', Ref, process, _, _} -> gen_server:reply(From, gen_server:call(P, R))
+                      end
+                  end),
+            {noreply, State}
     end.
