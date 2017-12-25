@@ -21,9 +21,9 @@
 -record(datum, {key :: term(),
                 mgr, % ???
                 data :: term(),
-                started :: erlang:timestamp(),
+                started :: integer(),
                 reaper :: undefined|pid(),
-                last_active :: erlang:timestamp(),
+                last_active :: integer(),
                 ttl = unlimited:: unlimited|non_neg_integer(),
                 type = mru :: mru|actual_time,
                 remaining_ttl = unlimited:: unlimited|non_neg_integer()}).
@@ -84,7 +84,7 @@ handle_call(empty, _From, #cache{datum_index = Index} = State) ->
     ets:delete_all_objects(Index),
     {reply, ok, State};
 handle_call(reap_oldest, _From, #cache{datum_index = Index} = State) ->
-    DatumNow = #datum{last_active = os:timestamp()},
+    DatumNow = #datum{last_active = timestamp()},
     LeastActive = ets:foldl(fun(#datum{last_active = LA} = A, #datum{last_active = Acc}) when LA < Acc -> A;
                                (_, Acc) -> Acc
                             end, DatumNow, Index),
@@ -170,7 +170,7 @@ delete_object(Index, #datum{reaper = Reaper} = Datum) ->
 
 -compile({inline, [create_datum/4]}).
 create_datum(DatumKey, Data, TTL, Type) ->
-    Timestamp = os:timestamp(),
+    Timestamp = timestamp(),
     #datum{key = DatumKey, data = Data, type = Type,
            started = Timestamp, ttl = TTL, remaining_ttl = TTL, last_active = Timestamp}.
 
@@ -202,12 +202,12 @@ ping_reaper(Reaper, NewTTL) when is_pid(Reaper) -> Reaper ! {update_ttl, NewTTL}
 ping_reaper(_, _) -> ok.
 
 update_ttl(Index, #datum{key = Key, ttl = unlimited}) ->
-    ets:update_element(Index, Key, {#datum.last_active, os:timestamp()});
+    ets:update_element(Index, Key, {#datum.last_active, timestamp()});
 update_ttl(Index, #datum{key = Key, started = Started, ttl = TTL, type = actual_time, reaper = Reaper}) ->
-    Timestamp = os:timestamp(),
+    Timestamp = timestamp(),
     % Get total time in seconds this datum has been running.  Convert to ms.
     % If we are less than the TTL, update with TTL-used (TTL in ms too) else, we ran out of time.  expire on next loop.
-    TTLRemaining = case timer:now_diff(Timestamp, Started) div 1000 of
+    TTLRemaining = case time_diff(Timestamp, Started) of
                        StartedNowDiff when StartedNowDiff < TTL -> TTL - StartedNowDiff;
                        _ -> 0
                    end,
@@ -215,7 +215,7 @@ update_ttl(Index, #datum{key = Key, started = Started, ttl = TTL, type = actual_
     ets:update_element(Index, Key, [{#datum.last_active, Timestamp}, {#datum.remaining_ttl, TTLRemaining}]);
 update_ttl(Index, #datum{key = Key, ttl = TTL, reaper = Reaper}) ->
     ping_reaper(Reaper, TTL),
-    ets:update_element(Index, Key, {#datum.last_active, os:timestamp()}).
+    ets:update_element(Index, Key, {#datum.last_active, timestamp()}).
 
 fetch_data(Key, Index) when is_tuple(Key) ->
     case ets:lookup(Index, Key) of
@@ -227,7 +227,7 @@ fetch_data(Key, Index) when is_tuple(Key) ->
     end.
 
 replace_datum(Key, Data, Index) when is_tuple(Key) ->
-    ets:update_element(Index, Key, [{#datum.data, Data}, {#datum.last_active, os:timestamp()}]).
+    ets:update_element(Index, Key, [{#datum.data, Data}, {#datum.last_active, timestamp()}]).
 
 get_all_keys(Index) -> get_all_keys(Index, [ets:first(Index)]).
 
@@ -261,3 +261,8 @@ generic_get(R, From, #cache{datum_index = Index} = State, UseKey, M, F, Key) ->
                   end),
             {noreply, State}
     end.
+
+timestamp() -> erlang:monotonic_time(milli_seconds).
+
+time_diff(T2, T1) -> T2 - T1.
+-compile({inline, [time_diff/2]}).
