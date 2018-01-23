@@ -249,7 +249,9 @@ generic_get(R, From, #cache{datum_index = Index} = State, UseKey, M, F, Key) ->
                                                                    {ok, Data} ->
                                                                        gen_server:cast(P, launched),
                                                                        Data;
-                                                                   Error -> Error
+                                                                   Error ->
+                                                                       ets:delete(Index, UseKey),
+                                                                       Error
                                                                end)
                                           end)}),
             {noreply, State};
