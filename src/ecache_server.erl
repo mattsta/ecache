@@ -191,7 +191,8 @@ datum_error(How, What) -> {ecache_datum_error, {How, What}}.
 launch_datum(Key, Index, Module, Accessor, TTL, Policy, UseKey) ->
     try Module:Accessor(Key) of
         CacheData ->
-            ets:insert(Index, launch_datum_ttl_reaper(Index, UseKey, create_datum(UseKey, CacheData, TTL, Policy))),
+            Datum = launch_datum_ttl_reaper(Index, UseKey, create_datum(UseKey, CacheData, TTL, Policy)),
+            ets:insert(Index, Datum#datum{mgr = undefined}),
             {ok, CacheData}
     catch
         How:What -> datum_error({How, What}, erlang:get_stacktrace())
