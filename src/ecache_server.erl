@@ -256,12 +256,16 @@ generic_get(R, From, #cache{datum_index = Index} = State, UseKey, M, F, Key) ->
             {noreply, State};
         {ecache, LockPid} when is_pid(LockPid) ->
             spawn(fun() ->
-                      Ref = monitor(process, LockPid),
-                      receive
-                          {'DOWN', Ref, process, _, _} -> gen_server:reply(From, gen_server:call(P, R))
-                      end
+                      datum_wait(monitor(process, LockPid), LockPid),
+                      gen_server:reply(From, gen_server:call(P, R))
                   end),
             {noreply, State}
+    end.
+
+datum_wait(Ref, LockPid) ->
+    receive
+        {'DOWN', Ref, process, LockPid, _} -> ok;
+        _ -> datum_wait(Ref, LockPid)
     end.
 
 timestamp() -> erlang:monotonic_time(milli_seconds).
