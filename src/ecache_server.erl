@@ -13,6 +13,7 @@
                 reaper :: undefined|pid(),
                 data_accessor :: atom(),
                 size = unlimited :: unlimited|non_neg_integer(),
+                pending = #{} :: map(),
                 found = 0 :: non_neg_integer(),
                 launched = 0 :: non_neg_integer(),
                 policy = mru :: mru|actual_time,
@@ -121,12 +122,22 @@ handle_cast({dirty, Id}, #cache{datum_index = Index} = State) ->
     {noreply, State};
 handle_cast({generic_dirty, M, F, A}, #cache{datum_index = Index} = State) ->
     delete_datum(Index, key(M, F, A)),
+    {noreply, State};
+handle_cast(Req, State) ->
+    error_logger:info_report("Other cast of: ~p~n", [Req]),
     {noreply, State}.
 
 handle_info({destroy,_DatumPid, ok}, State) -> {noreply, State};
 handle_info({'DOWN', _Ref, process, Reaper, _Reason}, #cache{reaper = Reaper, name = Name, size = Size} = State) ->
     {NewReaper, _Mon} = ecache_reaper:start_link(Name, Size),
     {noreply, State#cache{reaper = NewReaper}};
+handle_info({'DOWN', Ref, process, _Pid, _Reason}, #cache{pending = Pending} = State) ->
+    {noreply, case maps:take(Ref, Pending) of
+                  {{From, Req}, NewPending} when is_pid(From) ->
+                      gen_server:reply(From, gen_server:call(self(), Req)),
+                      State#cache{pending = NewPending};
+                  _error -> State
+              end};
 handle_info({'DOWN', _Ref, process, _Pid, _Reason}, State) -> {noreply, State};
 handle_info(Info, State) ->
     error_logger:info_report("Other info of: ~p~n", [Info]),
@@ -234,12 +245,12 @@ get_all_keys(Index) -> get_all_keys(Index, [ets:first(Index)]).
 get_all_keys(_, ['$end_of_table'|Acc]) -> Acc;
 get_all_keys(Index, [Key|_] = Acc) -> get_all_keys(Index, [ets:next(Index, Key)|Acc]).
 
-generic_get(R, From, #cache{datum_index = Index} = State, UseKey, M, F, Key) ->
-    P = self(),
+generic_get(Req, From, #cache{datum_index = Index} = State, UseKey, M, F, Key) ->
     case fetch_data(UseKey, Index) of
         {ok, Data} -> {reply, Data, State#cache{found = State#cache.found + 1}};
         {ecache, notfound} ->
             #cache{ttl = TTL, policy = Policy} = State,
+            P = self(),
             ets:insert(Index,
                        #datum{key = UseKey,
                               mgr = spawn(fun() ->
@@ -254,18 +265,8 @@ generic_get(R, From, #cache{datum_index = Index} = State, UseKey, M, F, Key) ->
                                                                end)
                                           end)}),
             {noreply, State};
-        {ecache, LockPid} when is_pid(LockPid) ->
-            spawn(fun() ->
-                      datum_wait(monitor(process, LockPid), LockPid),
-                      gen_server:reply(From, gen_server:call(P, R))
-                  end),
-            {noreply, State}
-    end.
-
-datum_wait(Ref, LockPid) ->
-    receive
-        {'DOWN', Ref, process, LockPid, _} -> ok;
-        _ -> datum_wait(Ref, LockPid)
+        {ecache, Louncher} when is_pid(Louncher) ->
+            {noreply, State#cache{pending = (State#cache.pending)#{monitor(process, Louncher) => {From, Req}}}}
     end.
 
 timestamp() -> erlang:monotonic_time(milli_seconds).
