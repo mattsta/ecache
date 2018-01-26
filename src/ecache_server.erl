@@ -265,8 +265,8 @@ generic_get(Req, From, #cache{datum_index = Index} = State, UseKey, M, F, Key) -
                                                                end)
                                           end)}),
             {noreply, State};
-        {ecache, Louncher} when is_pid(Louncher) ->
-            {noreply, State#cache{pending = (State#cache.pending)#{monitor(process, Louncher) => {From, Req}}}}
+        {ecache, Launcher} when is_pid(Launcher) ->
+            {noreply, State#cache{pending = (State#cache.pending)#{monitor(process, Launcher) => {From, Req}}}}
     end.
 
 timestamp() -> erlang:monotonic_time(milli_seconds).
