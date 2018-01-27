@@ -61,8 +61,7 @@ init([Name, Mod, Fun, Size, Time, Policy]) when is_atom(Mod), is_atom(Fun), is_a
 init(#cache{size = unlimited} = State) -> {ok, State};
 init(#cache{name = Name, size = Size} = State) when is_integer(Size), Size > 0 ->
     SizeBytes = Size * (1024 * 1024),
-    {ok, Reaper} = ecache_reaper:start(Name, SizeBytes),
-    {ok, State#cache{reaper = erlang:monitor(process, Reaper), size = SizeBytes}}.
+    {ok, State#cache{reaper = start_reaper(Name, SizeBytes), size = SizeBytes}}.
 
 handle_call({get, Key} = R, From, #cache{data_module = M, data_accessor = F} = State) ->
     generic_get(R, From, State, key(Key), M, F, Key);
@@ -129,8 +128,7 @@ handle_cast(Req, State) ->
 
 handle_info({destroy,_DatumPid, ok}, State) -> {noreply, State};
 handle_info({'DOWN', _Ref, process, Reaper, _Reason}, #cache{reaper = Reaper, name = Name, size = Size} = State) ->
-    {NewReaper, _Mon} = ecache_reaper:start_link(Name, Size),
-    {noreply, State#cache{reaper = NewReaper}};
+    {noreply, State#cache{reaper = start_reaper(Name, Size)}};
 handle_info({'DOWN', Ref, process, _Pid, {value, V}}, #cache{pending = Pending, found = Found} = State) ->
     {noreply, case maps:take(Ref, Pending) of
                   {{From, _Req}, NewPending} ->
@@ -285,6 +283,11 @@ generic_get(Req, From, #cache{datum_index = Index} = State, UseKey, M, F, Key) -
         {ecache, Launcher} when is_pid(Launcher) ->
             {noreply, State#cache{pending = (State#cache.pending)#{monitor(process, Launcher) => {From, Req}}}}
     end.
+
+start_reaper(Name, Size) ->
+    {ok, Reaper} = ecache_reaper:start(Name, Size),
+    monitor(process, Reaper),
+    Reaper.
 
 timestamp() -> erlang:monotonic_time(milli_seconds).
 
