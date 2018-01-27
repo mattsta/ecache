@@ -205,8 +205,7 @@ reap_after(Index, Key, LifeTTL) ->
 
 launch_datum_ttl_reaper(_, _, #datum{remaining_ttl = unlimited} = Datum) -> Datum;
 launch_datum_ttl_reaper(Index, Key, #datum{remaining_ttl = TTL} = Datum) ->
-    Datum#datum{reaper = spawn_link(fun() -> reap_after(Index, Key, TTL) end)}.
-
+    Datum#datum{reaper = spawn(fun() -> reap_after(Index, Key, TTL) end)}.
 
 -compile({inline, [datum_error/2]}).
 datum_error(How, What) -> {ecache_datum_error, {How, What}}.
@@ -266,9 +265,7 @@ generic_get(Req, From, #cache{datum_index = Index} = State, UseKey, M, F, Key) -
             ets:insert_new(Index,
                            #datum{key = UseKey,
                                   mgr = spawn(fun() ->
-                                                  process_flag(trap_exit, true),
-                                                  exit(self(),
-                                                       case launch_datum(Key, Index, M, F, TTL, Policy, UseKey) of
+                                                  exit(case launch_datum(Key, Index, M, F, TTL, Policy, UseKey) of
                                                            {ok, Data} ->
                                                                gen_server:cast(P, launched),
                                                                gen_server:reply(From, Data),
