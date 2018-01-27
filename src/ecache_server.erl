@@ -126,7 +126,7 @@ handle_cast(Req, State) ->
     error_logger:info_report("Other cast of: ~p~n", [Req]),
     {noreply, State}.
 
-handle_info({destroy,_DatumPid, ok}, State) -> {noreply, State};
+handle_info({destroy, _DatumPid, ok}, State) -> {noreply, State};
 handle_info({'DOWN', _Ref, process, Reaper, _Reason}, #cache{reaper = Reaper, name = Name, size = Size} = State) ->
     {noreply, State#cache{reaper = start_reaper(Name, Size)}};
 handle_info({'DOWN', Ref, process, _Pid, {value, V}}, #cache{pending = Pending, found = Found} = State) ->
