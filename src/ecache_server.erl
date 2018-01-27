@@ -251,19 +251,20 @@ generic_get(Req, From, #cache{datum_index = Index} = State, UseKey, M, F, Key) -
         {ecache, notfound} ->
             #cache{ttl = TTL, policy = Policy} = State,
             P = self(),
-            ets:insert(Index,
-                       #datum{key = UseKey,
-                              mgr = spawn(fun() ->
-                                              gen_server:reply(From,
-                                                               case launch_datum(Key, Index, M, F, TTL, Policy, UseKey) of
-                                                                   {ok, Data} ->
-                                                                       gen_server:cast(P, launched),
-                                                                       Data;
-                                                                   Error ->
-                                                                       ets:delete(Index, UseKey),
-                                                                       Error
-                                                               end)
-                                          end)}),
+            ets:insert_new(Index,
+                           #datum{key = UseKey,
+                                  mgr = spawn(fun() ->
+                                                  gen_server:reply(From,
+                                                                   case launch_datum(Key, Index,
+                                                                                     M, F, TTL, Policy, UseKey) of
+                                                                       {ok, Data} ->
+                                                                           gen_server:cast(P, launched),
+                                                                           Data;
+                                                                       Error ->
+                                                                           ets:delete(Index, UseKey),
+                                                                           Error
+                                                                   end)
+                                              end)}),
             {noreply, State};
         {ecache, Launcher} when is_pid(Launcher) ->
             {noreply, State#cache{pending = (State#cache.pending)#{monitor(process, Launcher) => {From, Req}}}}
