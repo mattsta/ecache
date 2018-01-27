@@ -131,13 +131,6 @@ handle_info({destroy,_DatumPid, ok}, State) -> {noreply, State};
 handle_info({'DOWN', _Ref, process, Reaper, _Reason}, #cache{reaper = Reaper, name = Name, size = Size} = State) ->
     {NewReaper, _Mon} = ecache_reaper:start_link(Name, Size),
     {noreply, State#cache{reaper = NewReaper}};
-handle_info({'DOWN', Ref, process, _Pid, {value, V}}, #cache{pending = Pending, found = Found} = State) ->
-    {noreply, case maps:take(Ref, Pending) of
-                  {{From, _Req}, NewPending} when is_pid(From) ->
-                      gen_server:reply(From, V),
-                      State#cache{pending = NewPending, found = Found + 1};
-                  _error -> State
-              end};
 handle_info({'DOWN', Ref, process, _Pid, _Reason}, #cache{pending = Pending} = State) ->
     {noreply, case maps:take(Ref, Pending) of
                   {{From, Req}, NewPending} when is_pid(From) ->
@@ -258,20 +251,19 @@ generic_get(Req, From, #cache{datum_index = Index} = State, UseKey, M, F, Key) -
         {ecache, notfound} ->
             #cache{ttl = TTL, policy = Policy} = State,
             P = self(),
-            ets:insert_new(Index,
-                           #datum{key = UseKey,
-                                  mgr = spawn(fun() ->
-                                                  case launch_datum(Key, Index, M, F, TTL, Policy, UseKey) of
-                                                      {ok, Data} ->
-                                                          gen_server:cast(P, launched),
-                                                          gen_server:reply(From, Data),
-                                                          process_flag(trap_exit, true),
-                                                          exit(self(), Data);
-                                                      Error ->
-                                                          ets:delete(Index, UseKey),
-                                                          gen_server:reply(From, Error)
-                                                  end
-                                              end)}),
+            ets:insert(Index,
+                       #datum{key = UseKey,
+                              mgr = spawn(fun() ->
+                                              gen_server:reply(From,
+                                                               case launch_datum(Key, Index, M, F, TTL, Policy, UseKey) of
+                                                                   {ok, Data} ->
+                                                                       gen_server:cast(P, launched),
+                                                                       Data;
+                                                                   Error ->
+                                                                       ets:delete(Index, UseKey),
+                                                                       Error
+                                                               end)
+                                          end)}),
             {noreply, State};
         {ecache, Launcher} when is_pid(Launcher) ->
             {noreply, State#cache{pending = (State#cache.pending)#{monitor(process, Launcher) => {From, Req}}}}
