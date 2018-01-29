@@ -130,25 +130,25 @@ handle_info({destroy, _DatumPid, ok}, State) -> {noreply, State};
 handle_info({'DOWN', _Ref, process, Reaper, _Reason}, #cache{reaper = Reaper, name = Name, size = Size} = State) ->
     {noreply, State#cache{reaper = start_reaper(Name, Size)}};
 handle_info({'DOWN', Ref, process, _Pid, {value, V}}, #cache{pending = Pending, found = Found} = State) ->
-    {noreply, case maps:take(Ref, Pending) of
-                  {{From, _Req}, NewPending} ->
+    {noreply, case Pending of
+                  #{Ref := {From, _Req}} ->
                       gen_server:reply(From, V),
-                      State#cache{pending = NewPending, found = Found + 1};
-                  _error -> State
+                      State#cache{pending = maps:remove(Ref, Pending), found = Found + 1};
+                  _ -> State
               end};
 handle_info({'DOWN', Ref, process, _Pid, {error, E}}, #cache{pending = Pending} = State) ->
-    {noreply, case maps:take(Ref, Pending) of
-                  {{From, _Req}, NewPending} ->
+    {noreply, case Pending of
+                  #{Ref := {From, _Req}} ->
                       gen_server:reply(From, E),
-                      State#cache{pending = NewPending};
-                  _error -> State
+                      State#cache{pending = maps:remove(Ref, Pending)};
+                  _ -> State
               end};
 handle_info({'DOWN', Ref, process, _Pid, _Reason}, #cache{pending = Pending} = State) ->
-    {noreply, case maps:take(Ref, Pending) of
-                  {{From, Req}, NewPending} ->
+    {noreply, case Pending of
+                  #{Ref := {From, Req}} ->
                       gen_server:reply(From, gen_server:call(self(), Req)),
-                      State#cache{pending = NewPending};
-                  _error -> State
+                      State#cache{pending = maps:remove(Ref, Pending)};
+                  _ -> State
               end};
 handle_info({'DOWN', _Ref, process, _Pid, _Reason}, State) -> {noreply, State};
 handle_info(Info, State) ->
