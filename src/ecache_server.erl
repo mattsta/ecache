@@ -63,9 +63,9 @@ init(#cache{name = Name, size = Size} = State) when is_integer(Size), Size > 0 -
     SizeBytes = Size * (1024 * 1024),
     {ok, State#cache{reaper = start_reaper(Name, SizeBytes), size = SizeBytes}}.
 
-handle_call({get, Key} = R, From, #cache{data_module = M, data_accessor = F} = State) ->
-    generic_get(R, From, State, key(Key), M, F, Key);
-handle_call({generic_get, M, F, Key} = R, From, State) -> generic_get(R, From, State, key(M, F, Key), M, F, Key);
+handle_call({get, Key}, From, #cache{data_module = M, data_accessor = F} = State) ->
+    generic_get(key(Key), From, State, M, F, Key);
+handle_call({generic_get, M, F, Key}, From, State) -> generic_get(key(M, F, Key), From, State, M, F, Key);
 handle_call(total_size, _From, #cache{} = State) -> {reply, cache_bytes(State), State};
 handle_call(stats, _From, #cache{datum_index = Index,
                                  found = Found, launched = Launched, policy = Policy, ttl = TTL} = State) ->
@@ -116,6 +116,7 @@ handle_cast({dirty, Id, NewData}, #cache{datum_index = Index} = State) ->
     replace_datum(key(Id), NewData, Index),
     {noreply, State};
 handle_cast(launched, #cache{launched = Launched} = State) -> {noreply, State#cache{launched = Launched + 1}};
+handle_cast(found, #cache{found = Found} = State) -> {noreply, State#cache{found = Found + 1}};
 handle_cast({dirty, Id}, #cache{datum_index = Index} = State) ->
     delete_datum(Index, key(Id)),
     {noreply, State};
@@ -129,27 +130,6 @@ handle_cast(Req, State) ->
 handle_info({destroy, _DatumPid, ok}, State) -> {noreply, State};
 handle_info({'DOWN', _Ref, process, Reaper, _Reason}, #cache{reaper = Reaper, name = Name, size = Size} = State) ->
     {noreply, State#cache{reaper = start_reaper(Name, Size)}};
-handle_info({'DOWN', Ref, process, _Pid, {value, V}}, #cache{pending = Pending, found = Found} = State) ->
-    {noreply, case Pending of
-                  #{Ref := {From, _Req}} ->
-                      gen_server:reply(From, V),
-                      State#cache{pending = maps:remove(Ref, Pending), found = Found + 1};
-                  _ -> State
-              end};
-handle_info({'DOWN', Ref, process, _Pid, {error, E}}, #cache{pending = Pending} = State) ->
-    {noreply, case Pending of
-                  #{Ref := {From, _Req}} ->
-                      gen_server:reply(From, E),
-                      State#cache{pending = maps:remove(Ref, Pending)};
-                  _ -> State
-              end};
-handle_info({'DOWN', Ref, process, _Pid, _Reason}, #cache{pending = Pending} = State) ->
-    {noreply, case Pending of
-                  #{Ref := {From, Req}} ->
-                      gen_server:reply(From, gen_server:call(self(), Req)),
-                      State#cache{pending = maps:remove(Ref, Pending)};
-                  _ -> State
-              end};
 handle_info({'DOWN', _Ref, process, _Pid, _Reason}, State) -> {noreply, State};
 handle_info(Info, State) ->
     error_logger:info_report("Other info of: ~p~n", [Info]),
@@ -256,29 +236,28 @@ get_all_keys(Index) -> get_all_keys(Index, [ets:first(Index)]).
 get_all_keys(_, ['$end_of_table'|Acc]) -> Acc;
 get_all_keys(Index, [Key|_] = Acc) -> get_all_keys(Index, [ets:next(Index, Key)|Acc]).
 
-generic_get(Req, From, #cache{datum_index = Index} = State, UseKey, M, F, Key) ->
+generic_get(UseKey, From, #cache{datum_index = Index} = State, M, F, Key) ->
     case fetch_data(UseKey, Index) of
-        {ok, Data} -> {reply, Data, State#cache{found = State#cache.found + 1}};
+        {ok, _} = R -> {reply, R, State#cache{found = State#cache.found + 1}};
         {ecache, notfound} ->
             #cache{ttl = TTL, policy = Policy} = State,
             P = self(),
             ets:insert_new(Index,
                            #datum{key = UseKey,
                                   mgr = spawn(fun() ->
-                                                  exit(case launch_datum(Key, Index, M, F, TTL, Policy, UseKey) of
-                                                           {ok, Data} ->
-                                                               gen_server:cast(P, launched),
-                                                               gen_server:reply(From, Data),
-                                                               {value, Data};
-                                                           Error ->
+                                                  R = case launch_datum(Key, Index, M, F, TTL, Policy, UseKey) of
+                                                          {ok, _} = Data ->
+                                                              gen_server:cast(P, launched),
+                                                              Data;
+                                                          Error ->
                                                                ets:delete(Index, UseKey),
-                                                               gen_server:reply(From, Error),
                                                                {error, Error}
-                                                       end)
+                                                      end,
+                                                  gen_server:reply(From, R),
+                                                  exit(R)
                                               end)}),
             {noreply, State};
-        {ecache, Launcher} when is_pid(Launcher) ->
-            {noreply, State#cache{pending = (State#cache.pending)#{monitor(process, Launcher) => {From, Req}}}}
+        {ecache, Launcher} = R when is_pid(Launcher) -> {reply, R, State}
     end.
 
 start_reaper(Name, Size) ->
