@@ -78,9 +78,7 @@ handle_call(stats, _From, #cache{datum_index = Index,
       {policy, Policy}, {ttl, TTL}],
      State};
 handle_call(empty, _From, #cache{datum_index = Index} = State) ->
-    lists:foreach(fun([Reaper]) when is_pid(Reaper) -> exit(Reaper, kill);
-                     (_) -> ok
-                  end, ets:match(Index, #datum{_ = '_', reaper = '$1'})),
+    kill_reapers(Index),
     ets:delete_all_objects(Index),
     {reply, ok, State};
 handle_call(reap_oldest, _From, #cache{datum_index = Index} = State) ->
@@ -269,3 +267,7 @@ timestamp() -> erlang:monotonic_time(milli_seconds).
 
 time_diff(T2, T1) -> T2 - T1.
 -compile({inline, [time_diff/2]}).
+
+kill_reapers(Index) ->
+    lists:foreach(fun(Reaper) -> exit(Reaper, kill) end,
+                  ets:select(Index, [{#datum{reaper = '$1', _ = '_'}, [{is_pid, '$1'}], ['$1']}])).
