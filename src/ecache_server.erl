@@ -263,11 +263,6 @@ start_reaper(Name, Size) ->
     monitor(process, Reaper),
     Reaper.
 
-start_reaper(Name, Size) ->
-    {ok, Reaper} = ecache_reaper:start(Name, Size),
-    monitor(process, Reaper),
-    Reaper.
-
 timestamp() -> erlang:monotonic_time(milli_seconds).
 
 time_diff(T2, T1) -> T2 - T1.
