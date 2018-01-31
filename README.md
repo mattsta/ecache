@@ -66,7 +66,7 @@ This is quite useful because many production applications will have 5 to 100 ind
 SupervisorWorkerTuple = ecache:cache_sup(Name, M, F, Size).
 ```
 
-For more examples, see https://github.com/mattsta/ecache/blob/master/test/ecache_tests.erl
+For more examples, see https://github.com/Ledest/ecache/blob/master/test/ecache_tests.erl
 
 
 Status

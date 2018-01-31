@@ -13,6 +13,7 @@
                 reaper :: undefined|pid(),
                 data_accessor :: atom(),
                 size = unlimited :: unlimited|non_neg_integer(),
+                pending = #{} :: map(),
                 found = 0 :: non_neg_integer(),
                 launched = 0 :: non_neg_integer(),
                 policy = mru :: mru|actual_time,
@@ -62,9 +63,9 @@ init(#cache{name = Name, size = Size} = State) when is_integer(Size), Size > 0 -
     SizeBytes = Size * (1024 * 1024),
     {ok, State#cache{reaper = start_reaper(Name, SizeBytes), size = SizeBytes}}.
 
-handle_call({get, Key} = R, From, #cache{data_module = M, data_accessor = F} = State) ->
-    generic_get(R, From, State, key(Key), M, F, Key);
-handle_call({generic_get, M, F, Key} = R, From, State) -> generic_get(R, From, State, key(M, F, Key), M, F, Key);
+handle_call({get, Key}, From, #cache{data_module = M, data_accessor = F} = State) ->
+    generic_get(key(Key), From, State, M, F, Key);
+handle_call({generic_get, M, F, Key}, From, State) -> generic_get(key(M, F, Key), From, State, M, F, Key);
 handle_call(total_size, _From, #cache{} = State) -> {reply, cache_bytes(State), State};
 handle_call(stats, _From, #cache{datum_index = Index,
                                  found = Found, launched = Launched, policy = Policy, ttl = TTL} = State) ->
@@ -77,9 +78,7 @@ handle_call(stats, _From, #cache{datum_index = Index,
       {policy, Policy}, {ttl, TTL}],
      State};
 handle_call(empty, _From, #cache{datum_index = Index} = State) ->
-    lists:foreach(fun([Reaper]) when is_pid(Reaper) -> exit(Reaper, kill);
-                     (_) -> ok
-                  end, ets:match(Index, #datum{_ = '_', reaper = '$1'})),
+    kill_reapers(Index),
     ets:delete_all_objects(Index),
     {reply, ok, State};
 handle_call(reap_oldest, _From, #cache{datum_index = Index} = State) ->
@@ -115,14 +114,18 @@ handle_cast({dirty, Id, NewData}, #cache{datum_index = Index} = State) ->
     replace_datum(key(Id), NewData, Index),
     {noreply, State};
 handle_cast(launched, #cache{launched = Launched} = State) -> {noreply, State#cache{launched = Launched + 1}};
+handle_cast(found, #cache{found = Found} = State) -> {noreply, State#cache{found = Found + 1}};
 handle_cast({dirty, Id}, #cache{datum_index = Index} = State) ->
     delete_datum(Index, key(Id)),
     {noreply, State};
 handle_cast({generic_dirty, M, F, A}, #cache{datum_index = Index} = State) ->
     delete_datum(Index, key(M, F, A)),
+    {noreply, State};
+handle_cast(Req, State) ->
+    error_logger:info_report("Other cast of: ~p~n", [Req]),
     {noreply, State}.
 
-handle_info({destroy,_DatumPid, ok}, State) -> {noreply, State};
+handle_info({destroy, _DatumPid, ok}, State) -> {noreply, State};
 handle_info({'DOWN', _Ref, process, Reaper, _Reason}, #cache{reaper = Reaper, name = Name, size = Size} = State) ->
     {noreply, State#cache{reaper = start_reaper(Name, Size)}};
 handle_info({'DOWN', _Ref, process, _Pid, _Reason}, State) -> {noreply, State};
@@ -180,8 +183,7 @@ reap_after(Index, Key, LifeTTL) ->
 
 launch_datum_ttl_reaper(_, _, #datum{remaining_ttl = unlimited} = Datum) -> Datum;
 launch_datum_ttl_reaper(Index, Key, #datum{remaining_ttl = TTL} = Datum) ->
-    Datum#datum{reaper = spawn_link(fun() -> reap_after(Index, Key, TTL) end)}.
-
+    Datum#datum{reaper = spawn(fun() -> reap_after(Index, Key, TTL) end)}.
 
 -compile({inline, [datum_error/2]}).
 datum_error(How, What) -> {ecache_datum_error, {How, What}}.
@@ -232,39 +234,34 @@ get_all_keys(Index) -> get_all_keys(Index, [ets:first(Index)]).
 get_all_keys(_, ['$end_of_table'|Acc]) -> Acc;
 get_all_keys(Index, [Key|_] = Acc) -> get_all_keys(Index, [ets:next(Index, Key)|Acc]).
 
-generic_get(R, From, #cache{datum_index = Index} = State, UseKey, M, F, Key) ->
-    P = self(),
+generic_get(UseKey, From, #cache{datum_index = Index} = State, M, F, Key) ->
     case fetch_data(UseKey, Index) of
-        {ok, Data} -> {reply, Data, State#cache{found = State#cache.found + 1}};
+        {ok, _} = R -> {reply, R, State#cache{found = State#cache.found + 1}};
         {ecache, notfound} ->
             #cache{ttl = TTL, policy = Policy} = State,
-            ets:insert(Index,
-                       #datum{key = UseKey,
-                              mgr = spawn(fun() ->
-                                              gen_server:reply(From,
-                                                               case launch_datum(Key, Index, M, F, TTL, Policy, UseKey) of
-                                                                   {ok, Data} ->
-                                                                       gen_server:cast(P, launched),
-                                                                       Data;
-                                                                   Error ->
-                                                                       ets:delete(Index, UseKey),
-                                                                       Error
-                                                               end)
-                                          end)}),
+            P = self(),
+            ets:insert_new(Index,
+                           #datum{key = UseKey,
+                                  mgr = spawn(fun() ->
+                                                  R = case launch_datum(Key, Index, M, F, TTL, Policy, UseKey) of
+                                                          {ok, _} = Data ->
+                                                              gen_server:cast(P, launched),
+                                                              Data;
+                                                          Error ->
+                                                               ets:delete(Index, UseKey),
+                                                               {error, Error}
+                                                      end,
+                                                  gen_server:reply(From, R),
+                                                  exit(R)
+                                              end)}),
             {noreply, State};
-        {ecache, LockPid} when is_pid(LockPid) ->
-            spawn(fun() ->
-                      datum_wait(monitor(process, LockPid), LockPid),
-                      gen_server:reply(From, gen_server:call(P, R))
-                  end),
-            {noreply, State}
+        {ecache, Launcher} = R when is_pid(Launcher) -> {reply, R, State}
     end.
 
-datum_wait(Ref, LockPid) ->
-    receive
-        {'DOWN', Ref, process, LockPid, _} -> ok;
-        _ -> datum_wait(Ref, LockPid)
-    end.
+start_reaper(Name, Size) ->
+    {ok, Reaper} = ecache_reaper:start(Name, Size),
+    monitor(process, Reaper),
+    Reaper.
 
 start_reaper(Name, Size) ->
     {ok, Reaper} = ecache_reaper:start(Name, Size),
@@ -275,3 +272,7 @@ timestamp() -> erlang:monotonic_time(milli_seconds).
 
 time_diff(T2, T1) -> T2 - T1.
 -compile({inline, [time_diff/2]}).
+
+kill_reapers(Index) ->
+    lists:foreach(fun(Reaper) -> exit(Reaper, kill) end,
+                  ets:select(Index, [{#datum{reaper = '$1', _ = '_'}, [{is_pid, '$1'}], ['$1']}])).

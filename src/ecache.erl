@@ -21,10 +21,9 @@ cache_ttl_sup(Name, Mod, Fun, Size, TTL) ->
 %% Calls into ecache_server
 %% ===================================================================
 
-get(Name, Key) -> gen_server:call(Name, {get, Key}, ?TIMEOUT).
+get(Name, Key) -> get_value(Name, {get, Key}).
 
-memoize(MemoizeCacheServer, Module, Fun, Key) ->
-    gen_server:call(MemoizeCacheServer, {generic_get, Module, Fun, Key}, ?TIMEOUT).
+memoize(MemoizeCacheServer, Module, Fun, Key) -> get_value(MemoizeCacheServer, {generic_get, Module, Fun, Key}).
 
 dirty_memoize(MemoizeCacheServer, Module, Fun, Key) ->
     gen_server:cast(MemoizeCacheServer, {generic_dirty, Module, Fun, Key}).
@@ -42,3 +41,20 @@ dirty(Name, Key) -> gen_server:cast(Name, {dirty, Key}).
 rand(Name, Count) -> gen_server:call(Name, {rand, data, Count}).
 
 rand_keys(Name, Count) -> gen_server:call(Name, {rand, keys, Count}).
+
+get_value(Name, Req) ->
+    case gen_server:call(Name, Req, ?TIMEOUT) of
+        {ok, Data} -> Data;
+        {error, Error} -> Error;
+        {ecache, Launcher} ->
+            Ref = monitor(process, Launcher),
+            receive
+                {'DOWN', Ref, process, _, Reason} -> case Reason of
+                                                         {ok, Data} ->
+                                                             gen_server:cast(Name, found),
+                                                             Data;
+                                                         {error, Error} -> Error;
+                                                         _noproc -> get_value(Name, Req)
+                                                     end
+            end
+    end.
