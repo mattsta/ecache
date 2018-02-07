@@ -45,7 +45,7 @@ handle_cast(_Request, State) -> {noreply, State}.
 terminate(_Reason, _State) -> ok.
 
 handle_info(Info, State) ->
-    error_logger:info_report("Other info of: ~p~n", [Info]),
+    error_logger:warning_msg("Other info of: ~p~n", [Info]),
     {noreply, State}.
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.

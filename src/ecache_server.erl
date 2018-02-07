@@ -122,7 +122,7 @@ handle_cast({generic_dirty, M, F, A}, #cache{datum_index = Index} = State) ->
     delete_datum(Index, key(M, F, A)),
     {noreply, State};
 handle_cast(Req, State) ->
-    error_logger:info_report("Other cast of: ~p~n", [Req]),
+    error_logger:warning_msg("Other cast of: ~p~n", [Req]),
     {noreply, State}.
 
 handle_info({destroy, _DatumPid, ok}, State) -> {noreply, State};
@@ -130,7 +130,7 @@ handle_info({'DOWN', _Ref, process, Reaper, _Reason}, #cache{reaper = Reaper, na
     {noreply, State#cache{reaper = start_reaper(Name, Size)}};
 handle_info({'DOWN', _Ref, process, _Pid, _Reason}, State) -> {noreply, State};
 handle_info(Info, State) ->
-    error_logger:info_report("Other info of: ~p~n", [Info]),
+    error_logger:warning_msg("Other info of: ~p~n", [Info]),
     {noreply, State}.
 
 terminate(_Reason, _State) -> ok.
