@@ -87,7 +87,7 @@ handle_call(reap_oldest, _From, #cache{datum_index = Index} = State) ->
                                (_, Acc) -> Acc
                             end, DatumNow, Index),
     LeastActive =:= DatumNow orelse delete_object(Index, LeastActive),
-    {reply, ok, State};
+    {reply, cache_bytes(State), State};
 handle_call({rand, Type, Count}, From, #cache{datum_index = Index} = State) ->
     spawn(fun() ->
               AllKeys = get_all_keys(Index),
@@ -157,7 +157,6 @@ unkey({ecache_multi, {_, _, _} = MFA}) -> MFA.
 cache_bytes(#cache{datum_index = Index} = State) -> cache_bytes(State, ets:info(Index, memory)).
 
 cache_bytes(#cache{table_pad = TabPad}, Mem) -> (Mem - TabPad) * erlang:system_info(wordsize).
--compile({inline, [cache_bytes/2]}).
 
 delete_datum(Index, Key) ->
     case ets:take(Index, Key) of
