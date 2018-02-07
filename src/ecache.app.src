@@ -1,5 +1,5 @@
 {application, ecache, [{description, "ecache - Erlang ETS Based Cache"},
-                       {vsn, "2.9.1"},
+                       {vsn, "2.9.2"},
                        {modules, []},
                        {registered, []},
                        {applications, [kernel, stdlib]},
