@@ -10,7 +10,7 @@
                 datum_index :: ets:tid(),
                 table_pad = 0 :: non_neg_integer(),
                 data_module :: module(),
-                reaper :: undefined|pid(),
+                reaper :: undefined|{reference(), pid()},
                 data_accessor :: atom(),
                 size = unlimited :: unlimited|non_neg_integer(),
                 pending = #{} :: map(),
@@ -126,13 +126,16 @@ handle_cast(Req, State) ->
     {noreply, State}.
 
 handle_info({destroy, _DatumPid, ok}, State) -> {noreply, State};
-handle_info({'DOWN', _Ref, process, Reaper, _Reason}, #cache{reaper = Reaper, name = Name, size = Size} = State) ->
+handle_info({'DOWN', Ref, process, Pid, _Reason}, #cache{reaper = {Ref, Pid}, name = Name, size = Size} = State) ->
     {noreply, State#cache{reaper = start_reaper(Name, Size)}};
 handle_info({'DOWN', _Ref, process, _Pid, _Reason}, State) -> {noreply, State};
 handle_info(Info, State) ->
     error_logger:warning_msg("Other info of: ~p~n", [Info]),
     {noreply, State}.
 
+terminate(_Reason, #cache{reaper = {Ref, Pid}}) ->
+    demonitor(Ref, [flush]),
+    gen_server:stop(Pid);
 terminate(_Reason, _State) -> ok.
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
@@ -258,9 +261,8 @@ generic_get(UseKey, From, #cache{datum_index = Index} = State, M, F, Key) ->
     end.
 
 start_reaper(Name, Size) ->
-    {ok, Reaper} = ecache_reaper:start(Name, Size),
-    monitor(process, Reaper),
-    Reaper.
+    {ok, Pid} = ecache_reaper:start_link(Name, Size),
+    {monitor(process, Pid), Pid}.
 
 timestamp() -> erlang:monotonic_time(milli_seconds).
 
