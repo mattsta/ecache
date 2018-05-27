@@ -163,12 +163,12 @@ cache_bytes(#cache{table_pad = TabPad}, Mem) -> (Mem - TabPad) * erlang:system_i
 
 delete_datum(Index, Key) ->
     case ets:take(Index, Key) of
-        [#datum{reaper = Reaper}] when is_pid(Reaper) -> exit(Reaper, kill);
+        [#datum{reaper = Reaper}] -> kill_reaper(Reaper);
         _ -> true
     end.
 
 delete_object(Index, #datum{reaper = Reaper} = Datum) ->
-    is_pid(Reaper) andalso exit(Reaper, kill),
+    kill_reaper(Reaper),
     ets:delete_object(Index, Datum).
 
 -compile({inline, [create_datum/4]}).
@@ -270,5 +270,7 @@ time_diff(T2, T1) -> T2 - T1.
 -compile({inline, [time_diff/2]}).
 
 kill_reapers(Index) ->
-    lists:foreach(fun(Reaper) -> exit(Reaper, kill) end,
-                  ets:select(Index, [{#datum{reaper = '$1', _ = '_'}, [{is_pid, '$1'}], ['$1']}])).
+    lists:foreach(fun kill_reaper/1, ets:select(Index, [{#datum{reaper = '$1', _ = '_'}, [], ['$1']}])).
+-compile({inline, [kill_reapers/1]}).
+
+kill_reaper(Reaper) -> not is_pid(Reaper) orelse exit(Reaper, kill).
