@@ -10,7 +10,7 @@
                 datum_index :: ets:tid(),
                 table_pad = 0 :: non_neg_integer(),
                 data_module :: module(),
-                reaper :: undefined|{reference(), pid()},
+                reaper :: undefined|pid(),
                 data_accessor :: atom(),
                 size = unlimited :: unlimited|non_neg_integer(),
                 pending = #{} :: map(),
@@ -47,6 +47,7 @@ start_link(Name, Mod, Fun, Size, Time, Policy) ->
 
 init([Name, Mod, Fun, Size, Time, Policy]) when is_atom(Mod), is_atom(Fun), is_atom(Policy),
                                                 Time =:= unlimited orelse is_integer(Time) andalso Time > 0 ->
+    process_flag(trap_exit, true),
     Index = ets:new(Name, [set, compressed, public, % public because we spawn writers
                            {keypos, #datum.key},    % use Key stored in record
                            {read_concurrency, true}]),
@@ -126,16 +127,15 @@ handle_cast(Req, State) ->
     {noreply, State}.
 
 handle_info({destroy, _DatumPid, ok}, State) -> {noreply, State};
-handle_info({'DOWN', Ref, process, Pid, _Reason}, #cache{reaper = {Ref, Pid}, name = Name, size = Size} = State) ->
+handle_info({'EXIT', Pid, _Reason}, #cache{reaper = Pid, name = Name, size = Size} = State) ->
     {noreply, State#cache{reaper = start_reaper(Name, Size)}};
+handle_info({'EXIT', _Pid, _Reason}, State) -> {noreply, State};
 handle_info({'DOWN', _Ref, process, _Pid, _Reason}, State) -> {noreply, State};
 handle_info(Info, State) ->
     error_logger:warning_msg("Other info of: ~p~n", [Info]),
     {noreply, State}.
 
-terminate(_Reason, #cache{reaper = {Ref, Pid}}) ->
-    demonitor(Ref, [flush]),
-    gen_server:stop(Pid);
+terminate(_Reason, #cache{reaper = Pid}) when is_pid(Pid) -> gen_server:stop(Pid);
 terminate(_Reason, _State) -> ok.
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
@@ -185,7 +185,10 @@ reap_after(Index, Key, LifeTTL) ->
 
 launch_datum_ttl_reaper(_, _, #datum{remaining_ttl = unlimited} = Datum) -> Datum;
 launch_datum_ttl_reaper(Index, Key, #datum{remaining_ttl = TTL} = Datum) ->
-    Datum#datum{reaper = spawn(fun() -> reap_after(Index, Key, TTL) end)}.
+    Datum#datum{reaper = spawn(fun() ->
+                                   link(ets:info(Index, owner)),
+                                   reap_after(Index, Key, TTL)
+                               end)}.
 
 -compile({inline, [datum_error/2]}).
 datum_error(How, What) -> {ecache_datum_error, {How, What}}.
@@ -262,7 +265,7 @@ generic_get(UseKey, From, #cache{datum_index = Index} = State, M, F, Key) ->
 
 start_reaper(Name, Size) ->
     {ok, Pid} = ecache_reaper:start_link(Name, Size),
-    {monitor(process, Pid), Pid}.
+    Pid.
 
 timestamp() -> erlang:monotonic_time(milli_seconds).
 
