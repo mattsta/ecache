@@ -190,13 +190,26 @@ launch_datum_ttl_reaper(Index, Key, #datum{remaining_ttl = TTL} = Datum) ->
                                    reap_after(Index, Key, TTL)
                                end)}.
 
+-ifdef(OTP_RELEASE).
+-if (?OTP_RELEASE >= 21).
+-define(EXCEPTION(Class, Reason, Stacktrace), Class:Reason:Stacktrace).
+-define(GET_STACK(Stacktrace), Stacktrace).
+-endif.
+-endif.
+-ifndef(EXCEPTION).
+-define(EXCEPTION(Class, Reason, _), Class:Reason).
+-endif.
+-ifndef(GET_STACK).
+-define(GET_STACK(_), erlang:get_stacktrace()).
+-endif.
+
 launch_datum(Key, Index, Module, Accessor, TTL, Policy, UseKey) ->
     try Module:Accessor(Key) of
         CacheData ->
             ets:insert(Index, launch_datum_ttl_reaper(Index, UseKey, create_datum(UseKey, CacheData, TTL, Policy))),
             {ok, CacheData}
     catch
-        How:What -> {ecache_datum_error, {{How, What}, erlang:get_stacktrace()}}
+        ?EXCEPTION(How, What, Stacktrace) -> {ecache_datum_error, {{How, What}, ?GET_STACK(Stacktrace)}}
     end.
 
 -compile({inline, [ping_reaper/2]}).
