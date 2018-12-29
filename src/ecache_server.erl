@@ -190,16 +190,13 @@ launch_datum_ttl_reaper(Index, Key, #datum{remaining_ttl = TTL} = Datum) ->
                                    reap_after(Index, Key, TTL)
                                end)}.
 
--compile({inline, [datum_error/2]}).
-datum_error(How, What) -> {ecache_datum_error, {How, What}}.
-
 launch_datum(Key, Index, Module, Accessor, TTL, Policy, UseKey) ->
     try Module:Accessor(Key) of
         CacheData ->
             ets:insert(Index, launch_datum_ttl_reaper(Index, UseKey, create_datum(UseKey, CacheData, TTL, Policy))),
             {ok, CacheData}
     catch
-        How:What -> datum_error({How, What}, erlang:get_stacktrace())
+        How:What -> {ecache_datum_error, {{How, What}, erlang:get_stacktrace()}}
     end.
 
 -compile({inline, [ping_reaper/2]}).
