@@ -49,12 +49,10 @@ get_value(Name, Req) ->
         {ecache, Launcher} ->
             Ref = monitor(process, Launcher),
             receive
-                {'DOWN', Ref, process, _, Reason} -> case Reason of
-                                                         {ok, Data} ->
-                                                             gen_server:cast(Name, found),
-                                                             Data;
-                                                         {error, Error} -> Error;
-                                                         _noproc -> get_value(Name, Req)
-                                                     end
+                {'DOWN', Ref, process, _, {ok, Data}} ->
+                    gen_server:cast(Name, found),
+                    Data;
+                {'DOWN', Ref, process, _, {error, Error}} -> Error;
+                {'DOWN', Ref, process, _, _noproc} -> get_value(Name, Req)
             end
     end.
