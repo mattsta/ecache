@@ -68,8 +68,8 @@ handle_call({get, Key}, From, #cache{data_module = M, data_accessor = F} = State
     generic_get(key(Key), From, State, M, F, Key);
 handle_call({generic_get, M, F, Key}, From, State) -> generic_get(key(M, F, Key), From, State, M, F, Key);
 handle_call(total_size, _From, #cache{} = State) -> {reply, cache_bytes(State), State};
-handle_call(stats, _From, #cache{datum_index = Index,
-                                 found = Found, launched = Launched, policy = Policy, ttl = TTL} = State) ->
+handle_call(stats, _From,
+            #cache{datum_index = Index, found = Found, launched = Launched, policy = Policy, ttl = TTL} = State) ->
     EtsInfo = ets:info(Index),
     {reply,
      [{cache_name, proplists:get_value(name, EtsInfo)},
@@ -111,11 +111,11 @@ handle_call({rand, Type, Count}, From, #cache{datum_index = Index} = State) ->
     {noreply, State};
 handle_call(Arbitrary, _From, State) -> {reply, {arbitrary, Arbitrary}, State}.
 
+handle_cast(launched, #cache{launched = Launched} = State) -> {noreply, State#cache{launched = Launched + 1}};
+handle_cast(found, #cache{found = Found} = State) -> {noreply, State#cache{found = Found + 1}};
 handle_cast({dirty, Id, NewData}, #cache{datum_index = Index} = State) ->
     replace_datum(key(Id), NewData, Index),
     {noreply, State};
-handle_cast(launched, #cache{launched = Launched} = State) -> {noreply, State#cache{launched = Launched + 1}};
-handle_cast(found, #cache{found = Found} = State) -> {noreply, State#cache{found = Found + 1}};
 handle_cast({dirty, Id}, #cache{datum_index = Index} = State) ->
     delete_datum(Index, key(Id)),
     {noreply, State};
