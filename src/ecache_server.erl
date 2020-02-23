@@ -82,13 +82,16 @@ handle_call(empty, _From, #cache{datum_index = Index} = State) ->
     kill_reapers(Index),
     ets:delete_all_objects(Index),
     {reply, ok, State};
-handle_call(reap_oldest, _From, #cache{datum_index = Index} = State) ->
-    DatumNow = #datum{last_active = timestamp()},
-    LeastActive = ets:foldl(fun(#datum{last_active = LA} = A, #datum{last_active = Acc}) when LA < Acc -> A;
-                               (_, Acc) -> Acc
-                            end, DatumNow, Index),
-    LeastActive =:= DatumNow orelse delete_object(Index, LeastActive),
-    {reply, cache_bytes(State), State};
+handle_call(reap_oldest, From, #cache{datum_index = Index} = State) ->
+    spawn(fun() ->
+              DatumNow = #datum{last_active = timestamp()},
+              LeastActive = ets:foldl(fun(#datum{last_active = LA} = A, #datum{last_active = Acc}) when LA < Acc -> A;
+                                         (_, Acc) -> Acc
+                                      end, DatumNow, Index),
+              LeastActive =:= DatumNow orelse delete_object(Index, LeastActive),
+              gen_server:reply(From, State)
+          end),
+    {noreply, State};
 handle_call({rand, Type, Count}, From, #cache{datum_index = Index} = State) ->
     spawn(fun() ->
               AllKeys = get_all_keys(Index),
