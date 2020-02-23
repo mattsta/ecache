@@ -104,7 +104,7 @@ handle_call({rand, Type, Count}, From, #cache{datum_index = Index} = State) ->
                                          if
                                              Length =< Count -> AllKeys;
                                              true -> lists:map(fun(K) -> lists:nth(K, AllKeys) end,
-                                                               lists:map(fun(_) -> crypto:rand_uniform(1, Length) end,
+                                                               lists:map(fun(_) -> rand:uniform(Length) end,
                                                                          lists:seq(1, Count)))
                                          end))
           end),
