@@ -1,6 +1,7 @@
 ecache: Erlang ETS Based TTL Cache
 ==================================
 
+![Erlang CI](https://github.com/Ledest/ecache/workflows/Erlang%20CI/badge.svg)
 [![Build Status](https://secure.travis-ci.org/Ledest/ecache.png)](http://travis-ci.org/Ledest/ecache)
 
 ecache stores your cache items in ets.  Each cache item gets its own monitoring
