@@ -11,8 +11,8 @@
 %% Supervisory helpers
 %% ===================================================================
 
-cache_sup(Name, Mod, Fun, Size) ->
-    {Name, {ecache_server, start_link, [Name, Mod, Fun, Size]}, permanent, brutal_kill, worker, [ecache_server]}.
+cache_sup(Name, Mod, Fun, Opts) ->
+    {Name, {ecache_server, start_link, [Name, Mod, Fun, Opts]}, permanent, brutal_kill, worker, [ecache_server]}.
 
 cache_ttl_sup(Name, Mod, Fun, Size, TTL) ->
     {Name, {ecache_server, start_link, [Name, Mod, Fun, Size, TTL]}, permanent, brutal_kill, worker, [ecache_server]}.
