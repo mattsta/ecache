@@ -12,12 +12,12 @@
                 data_module :: module(),
                 reaper :: undefined|pid(),
                 data_accessor :: atom(),
-                size = unlimited :: unlimited|non_neg_integer(),
+                size = 8 :: unlimited|non_neg_integer(),
                 pending = #{} :: map(),
                 found = 0 :: non_neg_integer(),
                 launched = 0 :: non_neg_integer(),
                 policy = mru :: mru|actual_time,
-                ttl = unlimited :: unlimited|non_neg_integer()}).
+                ttl = timer:minutes(5) :: unlimited|non_neg_integer()}).
 
 -record(datum, {key :: term(),
                 mgr, % ???
@@ -25,21 +25,28 @@
                 started :: integer(),
                 reaper :: undefined|pid(),
                 last_active :: integer(),
-                ttl = unlimited:: unlimited|non_neg_integer(),
+                ttl = unlimited :: unlimited|non_neg_integer(),
                 type = mru :: mru|actual_time,
                 remaining_ttl = unlimited:: unlimited|non_neg_integer()}).
 
 % make 8 MB cache
-start_link(Name, Mod, Fun) -> start_link(Name, Mod, Fun, 8).
-
-% make 5 minute expiry cache
-start_link(Name, Mod, Fun, Size) -> start_link(Name, Mod, Fun, Size, 300000).
+start_link(Name, Mod, Fun) -> start_link(Name, Mod, Fun, #{}).
 
 % make MRU policy cache
-start_link(Name, Mod, Fun, Size, Time) -> start_link(Name, Mod, Fun, Size, Time, mru).
+start_link(Name, Mod, Fun, Size, Time) -> start_link(Name, Mod, Fun, #{size => Size, time => Time}).
 
 start_link(Name, Mod, Fun, Size, Time, Policy) ->
-    gen_server:start_link({local, Name}, ?MODULE, [Name, Mod, Fun, Size, Time, Policy], []).
+    start_link(Name, Mod, Fun, #{size => Size, time => Time, policy => Policy}).
+
+start_link(Name, Mod, Fun, Opts) when is_map(Opts) ->
+    #cache{size = DSize, ttl = DTime, policy = DPolicy} = #cache{},
+    #{size := Size, time := Time, policy := Policy} = maps:merge(#{size => DSize, time => DTime, policy => DPolicy},
+                                                                 Opts),
+    gen_server:start_link({local, Name}, ?MODULE, [Name, Mod, Fun, Size, Time, Policy], []);
+start_link(Name, Mod, Fun, Opts) when is_list(Opts) -> start_link(Name, Mod, Fun, maps:from_list(Opts));
+% make 5 minute expiry cache
+start_link(Name, Mod, Fun, Size) when Size =:= unlimited; is_integer(Size), Size > 0 ->
+    start_link(Name, Mod, Fun, #{size => Size}).
 
 %%%----------------------------------------------------------------------
 %%% Callback functions from gen_server
