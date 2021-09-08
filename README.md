@@ -23,7 +23,7 @@ M = database,
 F = get_result,
 Size = 16,     % 16 MB cache
 Time = 300000, % 300,000 ms = 300s = 5 minute TTL
-Server = ecache_server:start_link(CacheName, M, F, Size, Time).
+Server = ecache_server:start_link(CacheName, M, F, #{size => Size, time => Time}).
 ```
 
 The TTL is an idle timer.  When an entry is accessed, the TTL for the entry is reset.
@@ -64,7 +64,7 @@ Nobody likes writing supervisor entries by hand, so we provide a supervisor entr
 This is quite useful because many production applications will have 5 to 100 individual cache pools.
 
 ```erlang
-SupervisorWorkerTuple = ecache:cache_sup(Name, M, F, Size).
+SupervisorWorkerTuple = ecache:child_spec(Name, M, F, #{size => Size}).
 ```
 
 For more examples, see https://github.com/Ledest/ecache/blob/master/test/ecache_tests.erl
