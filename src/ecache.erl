@@ -1,10 +1,12 @@
 -module(ecache).
 
 -export([child_spec/3, child_spec/4]).
--export([cache_sup/4, cache_ttl_sup/5]).
 -export([dirty/2, dirty/3, dirty_memoize/4, empty/1, get/2, memoize/4]).
 -export([stats/1, total_size/1]).
 -export([rand/2, rand_keys/2]).
+
+-export([cache_sup/4, cache_ttl_sup/5]).
+-deprecated([{cache_sup, 4, next_major_release}, {cache_ttl_sup, 5, next_major_release}]).
 
 -define(TIMEOUT, infinity).
 
