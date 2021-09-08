@@ -17,7 +17,7 @@
                 pending = #{} :: map(),
                 found = 0 :: non_neg_integer(),
                 launched = 0 :: non_neg_integer(),
-                policy = mru :: mru|actual_time,
+                policy = mru :: ecache:policy(),
                 ttl = timer:minutes(5) :: unlimited|non_neg_integer()}).
 
 -record(datum, {key :: term(),
@@ -27,18 +27,26 @@
                 reaper :: undefined|pid(),
                 last_active :: integer(),
                 ttl = unlimited :: unlimited|non_neg_integer(),
-                type = mru :: mru|actual_time,
+                type = mru :: ecache:policy(),
                 remaining_ttl = unlimited:: unlimited|non_neg_integer()}).
 
 % make 8 MB cache
+-spec start_link(Name::atom(), Mod::module(), Fun::atom()) -> {ok, pid()} | {error, term()}.
 start_link(Name, Mod, Fun) -> start_link(Name, Mod, Fun, #{}).
 
 % make MRU policy cache
+-spec start_link(Name::atom(), Mod::module(), Fun::atom(),
+                 Size::unlimited|pos_integer(), Time::unlimited|pos_integer()) ->
+          {ok, pid()} | {error, term()}.
 start_link(Name, Mod, Fun, Size, Time) -> start_link(Name, Mod, Fun, #{size => Size, time => Time}).
 
+-spec start_link(Name::atom(), Mod::module(), Fun::atom(),
+                 Size::unlimited|pos_integer(), Time::unlimited|pos_integer(), Policy::ecache:policy()) ->
+          {ok, pid()} | {error, term()}.
 start_link(Name, Mod, Fun, Size, Time, Policy) ->
     start_link(Name, Mod, Fun, #{size => Size, time => Time, policy => Policy}).
 
+-spec start_link(Name::atom(), Mod::module(), Fun::atom(), Opts::ecache:options()) -> {ok, pid()} | {error, term()}.
 start_link(Name, Mod, Fun, Opts) when is_map(Opts) ->
     #cache{size = DSize, ttl = DTime, policy = DPolicy} = #cache{},
     #{size := Size, time := Time, policy := Policy} = maps:merge(#{size => DSize, time => DTime, policy => DPolicy},
@@ -53,6 +61,7 @@ start_link(Name, Mod, Fun, Size) when Size =:= unlimited; is_integer(Size), Size
 %%% Callback functions from gen_server
 %%%----------------------------------------------------------------------
 
+-spec init([atom()|module()|unlimited|pos_integer()|ecache:policy()] | #cache{}) -> {ok, #cache{}}.
 init([Name, Mod, Fun, Size, Time, Policy]) when is_atom(Mod), is_atom(Fun), is_atom(Policy),
                                                 Time =:= unlimited orelse is_integer(Time) andalso Time > 0 ->
     process_flag(trap_exit, true),
@@ -72,6 +81,7 @@ init(#cache{name = Name, size = Size} = State) when is_integer(Size), Size > 0 -
     SizeBytes = Size * (1024 * 1024),
     {ok, State#cache{reaper = start_reaper(Name, SizeBytes), size = SizeBytes}}.
 
+-spec handle_call(term(), {pid(), term()}, #cache{}) -> {reply, term(), #cache{}} | {noreply, #cache{}}.
 handle_call({get, Key}, From, #cache{data_module = M, data_accessor = F} = State) ->
     generic_get(key(Key), From, State, M, F, Key);
 handle_call({generic_get, M, F, Key}, From, State) -> generic_get(key(M, F, Key), From, State, M, F, Key);
@@ -122,6 +132,7 @@ handle_call({rand, Type, Count}, From, #cache{datum_index = Index} = State) ->
     {noreply, State};
 handle_call(Arbitrary, _From, State) -> {reply, {arbitrary, Arbitrary}, State}.
 
+-spec handle_cast(term(), #cache{}) -> {noreply, #cache{}}.
 handle_cast(launched, #cache{launched = Launched} = State) -> {noreply, State#cache{launched = Launched + 1}};
 handle_cast(found, #cache{found = Found} = State) -> {noreply, State#cache{found = Found + 1}};
 handle_cast({dirty, Id, NewData}, #cache{datum_index = Index} = State) ->
@@ -137,6 +148,7 @@ handle_cast(Req, State) ->
     error_logger:warning_msg("Other cast of: ~p~n", [Req]),
     {noreply, State}.
 
+-spec handle_info(term(), #cache{}) -> {noreply, #cache{}}.
 handle_info({destroy, _DatumPid, ok}, State) -> {noreply, State};
 handle_info({'EXIT', Pid, _Reason}, #cache{reaper = Pid, name = Name, size = Size} = State) ->
     {noreply, State#cache{reaper = start_reaper(Name, Size)}};
@@ -146,9 +158,11 @@ handle_info(Info, State) ->
     error_logger:warning_msg("Other info of: ~p~n", [Info]),
     {noreply, State}.
 
+-spec terminate(term(), #cache{}) -> ok.
 terminate(_Reason, #cache{reaper = Pid}) when is_pid(Pid) -> gen_server:stop(Pid);
 terminate(_Reason, _State) -> ok.
 
+-spec code_change(term(), State, term()) -> {ok, State} when State::#cache{}.
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 -compile({inline, [key/1, key/3]}).
