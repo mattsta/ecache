@@ -2,9 +2,10 @@
 
 -behaviour(gen_server).
 
--export([start_link/3, start_link/4, start_link/5, start_link/6]).
--export([init/1, handle_call/3, handle_cast/2,
-         handle_info/2, terminate/2, code_change/3]).
+-export([start_link/3, start_link/4]).
+-export([start_link/5, start_link/6]).
+-deprecated([{start_link, 5, next_major_release}, {start_link, 6, next_major_release}]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
 -record(cache, {name :: atom(),
                 datum_index :: ets:tid(),

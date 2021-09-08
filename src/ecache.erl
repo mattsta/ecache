@@ -23,7 +23,8 @@ cache_sup(Name, Mod, Fun, Opts) ->
     {Name, {ecache_server, start_link, [Name, Mod, Fun, Opts]}, permanent, brutal_kill, worker, [ecache_server]}.
 
 cache_ttl_sup(Name, Mod, Fun, Size, TTL) ->
-    {Name, {ecache_server, start_link, [Name, Mod, Fun, Size, TTL]}, permanent, brutal_kill, worker, [ecache_server]}.
+    {Name, {ecache_server, start_link, [Name, Mod, Fun, #{size => Size, time => TTL}]},
+     permanent, brutal_kill, worker, [ecache_server]}.
 
 %% ===================================================================
 %% Calls into ecache_server

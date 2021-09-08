@@ -2,9 +2,9 @@
 
 -behaviour(gen_server).
 
--export([start/2]).
--export([start_link/1, start_link/2]).
-
+-export([start/2, start_link/2]).
+-export([start_link/1]).
+-deprecated({start_link, 1, next_major_release}).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
 -record(reaper, {name, size}).
