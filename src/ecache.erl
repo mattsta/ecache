@@ -20,12 +20,17 @@
 %% Supervisory helpers
 %% ===================================================================
 
+-define(DEFAULT_OPTS, #{size => unlimited, time => unlimited, policy => actual_time}).
+
 -spec child_spec(Name::atom(), Mod::module(), Fun::atom()) -> supervisor:child_spec().
-child_spec(Name, Mod, Fun) -> child_spec(Name, Mod, Fun, #{size => unlimited, time => unlimited, policy => actual_time}).
+child_spec(Name, Mod, Fun) -> child_spec(Name, Mod, Fun, #{}).
 
 -spec child_spec(Name::atom(), Mod::module(), Fun::atom(), Opts::policy()) -> supervisor:child_spec().
-child_spec(Name, Mod, Fun, Opts) when is_atom(Name), is_atom(Mod), is_atom(Fun), is_map(Opts) orelse is_list(Opts) ->
-    #{id => Name, start => {ecache_server, start_link, [Name, Mod, Fun, Opts]}, shutdown => brutal_kill}.
+child_spec(Name, Mod, Fun, Opts) when is_atom(Name), is_atom(Mod), is_atom(Fun), is_map(Opts) ->
+    #{id => Name,
+      start => {ecache_server, start_link, [Name, Mod, Fun, maps:merge(?DEFAULT_OPTS, Opts)]},
+      shutdown => brutal_kill};
+child_spec(Name, Mod, Fun, Opts) when is_list(Opts) -> child_spec(Name, Mod, Fun, maps:from_list(Opts)).
 
 -spec cache_sup(Name, Mod::module(), Fun::atom(), Opts::options()) ->
           {Name, {ecache_server, start_link, [term()], permanent, brutal_kill, worker, [ecache_server]}}
