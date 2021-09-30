@@ -10,9 +10,8 @@
 -record(cache, {name :: atom(),
                 datum_index :: ets:tid(),
                 table_pad = 0 :: non_neg_integer(),
-                data_module :: module(),
+                data_fun :: undefined|fun((term()) -> any()),
                 reaper :: undefined|pid(),
-                data_accessor :: atom(),
                 size = 8 :: unlimited|non_neg_integer(),
                 found = 0 :: non_neg_integer(),
                 launched = 0 :: non_neg_integer(),
@@ -50,7 +49,7 @@ start_link(Name, Mod, Fun, Opts) when is_map(Opts) ->
     #cache{size = DSize, ttl = DTime, policy = DPolicy} = #cache{},
     #{size := Size, time := Time, policy := Policy} = maps:merge(#{size => DSize, time => DTime, policy => DPolicy},
                                                                  Opts),
-    gen_server:start_link({local, Name}, ?MODULE, [Name, Mod, Fun, Size, Time, Policy], []);
+    gen_server:start_link({local, Name}, ?MODULE, [Name, fun Mod:Fun/1, Size, Time, Policy], []);
 start_link(Name, Mod, Fun, Opts) when is_list(Opts) -> start_link(Name, Mod, Fun, maps:from_list(Opts));
 % make 5 minute expiry cache
 start_link(Name, Mod, Fun, Size) when Size =:= unlimited; is_integer(Size), Size > 0 ->
@@ -61,8 +60,8 @@ start_link(Name, Mod, Fun, Size) when Size =:= unlimited; is_integer(Size), Size
 %%%----------------------------------------------------------------------
 
 -spec init([atom()|module()|unlimited|pos_integer()|ecache:policy()] | #cache{}) -> {ok, #cache{}}.
-init([Name, Mod, Fun, Size, Time, Policy]) when is_atom(Mod), is_atom(Fun), is_atom(Policy),
-                                                Time =:= unlimited orelse is_integer(Time) andalso Time > 0 ->
+init([Name, Fun, Size, Time, Policy]) when is_function(Fun, 1), is_atom(Policy),
+                                           Time =:= unlimited orelse is_integer(Time) andalso Time > 0 ->
     process_flag(trap_exit, true),
     Index = ets:new(Name, [set, compressed, public, % public because we spawn writers
                            {keypos, #datum.key},    % use Key stored in record
@@ -70,8 +69,7 @@ init([Name, Mod, Fun, Size, Time, Policy]) when is_atom(Mod), is_atom(Fun), is_a
     init(#cache{name = Name,
                 datum_index = Index,
                 table_pad = ets:info(Index, memory),
-                data_module = Mod,
-                data_accessor = Fun,
+                data_fun = Fun,
                 size = Size,
                 policy = Policy,
                 ttl = Time});
@@ -81,9 +79,8 @@ init(#cache{name = Name, size = Size} = State) when is_integer(Size), Size > 0 -
     {ok, State#cache{reaper = start_reaper(Name, SizeBytes), size = SizeBytes}}.
 
 -spec handle_call(term(), {pid(), term()}, #cache{}) -> {reply, term(), #cache{}} | {noreply, #cache{}}.
-handle_call({get, Key}, From, #cache{data_module = M, data_accessor = F} = State) ->
-    generic_get(key(Key), From, State, M, F, Key);
-handle_call({generic_get, M, F, Key}, From, State) -> generic_get(key(M, F, Key), From, State, M, F, Key);
+handle_call({get, Key}, From, #cache{data_fun = F} = State) -> generic_get(key(Key), From, State, F, Key);
+handle_call({generic_get, M, F, Key}, From, State) -> generic_get(key(M, F, Key), From, State, fun M:F/1, Key);
 handle_call(total_size, _From, #cache{} = State) -> {reply, cache_bytes(State), State};
 handle_call(stats, _From,
             #cache{datum_index = Index, found = Found, launched = Launched, policy = Policy, ttl = TTL} = State) ->
@@ -227,8 +224,8 @@ launch_datum_ttl_reaper(Index, Key, #datum{remaining_ttl = TTL} = Datum) ->
 -define(GET_STACK(_), erlang:get_stacktrace()).
 -endif.
 
-launch_datum(Key, Index, Module, Accessor, TTL, Policy, UseKey) ->
-    try Module:Accessor(Key) of
+launch_datum(Key, Index, F, TTL, Policy, UseKey) ->
+    try F(Key) of
         CacheData ->
             ets:insert(Index, launch_datum_ttl_reaper(Index, UseKey, create_datum(UseKey, CacheData, TTL, Policy))),
             {ok, CacheData}
@@ -273,7 +270,7 @@ get_all_keys(Index) -> get_all_keys(Index, [ets:first(Index)]).
 get_all_keys(_, ['$end_of_table'|Acc]) -> Acc;
 get_all_keys(Index, [Key|_] = Acc) -> get_all_keys(Index, [ets:next(Index, Key)|Acc]).
 
-generic_get(UseKey, From, #cache{datum_index = Index} = State, M, F, Key) ->
+generic_get(UseKey, From, #cache{datum_index = Index} = State, F, Key) ->
     case fetch_data(UseKey, Index) of
         {ok, _} = R -> {reply, R, State#cache{found = State#cache.found + 1}};
         {ecache, notfound} ->
@@ -282,7 +279,7 @@ generic_get(UseKey, From, #cache{datum_index = Index} = State, M, F, Key) ->
             ets:insert_new(Index,
                            #datum{key = UseKey,
                                   mgr = spawn(fun() ->
-                                                  R = case launch_datum(Key, Index, M, F, TTL, Policy, UseKey) of
+                                                  R = case launch_datum(Key, Index, F, TTL, Policy, UseKey) of
                                                           {ok, _} = Data ->
                                                               gen_server:cast(P, launched),
                                                               Data;
