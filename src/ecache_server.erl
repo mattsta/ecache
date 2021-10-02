@@ -45,7 +45,9 @@ start_link(Name, Fun, Opts) when is_atom(Name), is_function(Fun, 1), is_map(Opts
                                          policy => DPolicy,
                                          compressed => true},
                                        Opts),
-    gen_server:start_link({local, Name}, ?MODULE, [Name, Fun, Size, Time, Policy, Comp], []);
+    gen_server:start_link({local, Name}, ?MODULE,
+                          {#cache{name = Name, data_fun = Fun, size = Size, policy = Policy, ttl = Time}, Comp},
+                          []);
 start_link(Name, Fun, Opts) when is_list(Opts) -> start_link(Name, Fun, maps:from_list(Opts));
 % make 8 MB cache
 start_link(Name, Mod, Fun) -> start_link(Name, {Mod, Fun}, #{}).
@@ -73,32 +75,25 @@ start_link(Name, Mod, Fun, Size) -> start_link(Name, {Mod, Fun}, #{size => Size}
 %%% Callback functions from gen_server
 %%%----------------------------------------------------------------------
 
--spec init([atom()|module()|unlimited|pos_integer()|ecache:policy()|boolean()] | #cache{}) -> {ok, #cache{}}.
-init([Name, Fun, Size, Time, Policy, Comp])
-  when is_atom(Policy),
-       Size =:= unlimited orelse is_integer(Size) andalso Size > 0,
-       Time =:= unlimited orelse is_integer(Time) andalso Time > 0 ->
+-spec init({#cache{}, Comp::boolean()}) -> {ok, #cache{}}.
+init({#cache{name = Name, policy = Policy, ttl = Time} = Cache, Comp})
+  when Policy =:= actual_time orelse Policy =:= mru, Time =:= unlimited orelse is_integer(Time) andalso Time > 0 ->
     process_flag(trap_exit, true),
     TabOpts = [set,
                public,               % public because we spawn writers
                {keypos, #datum.key}, % use Key stored in record
                {read_concurrency, true}],
-    Table = ets:new(Name,
-                    if
-                        Comp -> [compressed|TabOpts];
-                        true -> TabOpts
-                    end),
-    init(#cache{name = Name,
-                table = Table,
-                table_pad = ets:info(Table, memory),
-                data_fun = Fun,
-                size = Size,
-                policy = Policy,
-                ttl = Time});
-init(#cache{size = unlimited} = State) -> {ok, State};
-init(#cache{name = Name, size = Size} = State) when is_integer(Size), Size > 0 ->
+    T = ets:new(Name,
+                if
+                    Comp -> [compressed|TabOpts];
+                    true -> TabOpts
+                end),
+    {ok, init_size(Cache#cache{table = T, table_pad = ets:info(T, memory)})}.
+
+init_size(#cache{size = unlimited} = State) -> State;
+init_size(#cache{name = Name, size = Size} = State) when is_integer(Size), Size > 0 ->
     SizeBytes = Size * (1024 * 1024),
-    {ok, State#cache{reaper = start_reaper(Name, SizeBytes), size = SizeBytes}}.
+    State#cache{reaper = start_reaper(Name, SizeBytes), size = SizeBytes}.
 
 -spec handle_call(term(), {pid(), term()}, #cache{}) -> {reply, term(), #cache{}} | {noreply, #cache{}}.
 handle_call({get, Key}, From, #cache{data_fun = F} = State) -> generic_get(key(Key), From, State, F, Key);
