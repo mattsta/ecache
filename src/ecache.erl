@@ -25,7 +25,7 @@
 -spec child_spec(Name::atom(), Mod::module(), Fun::atom()) -> supervisor:child_spec().
 child_spec(Name, Mod, Fun) -> child_spec(Name, Mod, Fun, #{}).
 
--spec child_spec(Name::atom(), Mod::module(), Fun::atom(), Opts::policy()) -> supervisor:child_spec().
+-spec child_spec(Name::atom(), Mod::module(), Fun::atom(), Opts::options()) -> supervisor:child_spec().
 child_spec(Name, Mod, Fun, Opts) when is_atom(Name), is_atom(Mod), is_atom(Fun), is_map(Opts) ->
     #{id => Name,
       start => {ecache_server, start_link, [Name, Mod, Fun, maps:merge(?DEFAULT_OPTS, Opts)]},
