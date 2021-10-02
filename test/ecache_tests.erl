@@ -55,7 +55,7 @@ ecache_test_() ->
 ecache_race_test_() ->
     {setup,
      fun() ->
-         {ok, Pid} = ecache_server:start_link(tc_race, rand, uniform, #{}),
+         {ok, Pid} = ecache_server:start_link(tc_race, fun rand:uniform/1),
          Pid
      end,
      fun ecache_cleanup/1,
