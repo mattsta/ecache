@@ -1,6 +1,6 @@
 -module(ecache).
 
--export([child_spec/3, child_spec/4]).
+-export([child_spec/2, child_spec/3, child_spec/4]).
 -export([dirty/2, dirty/3, dirty_memoize/4, empty/1, get/2, memoize/4]).
 -export([stats/1, total_size/1]).
 -export([rand/2, rand_keys/2]).
@@ -22,7 +22,18 @@
 
 -define(DEFAULT_OPTS, #{size => unlimited, time => unlimited, policy => actual_time}).
 
--spec child_spec(Name::atom(), Mod::module(), Fun::atom()) -> supervisor:child_spec().
+-spec child_spec(Name::atom(), Fun::fun((term()) -> any())|{module(), atom()}) -> supervisor:child_spec().
+child_spec(Name, Fun) -> child_spec(Name, Fun, #{}).
+
+-spec child_spec(Name::atom(), Fun::fun((term()) -> any()), Opts::options()) -> supervisor:child_spec();
+                (Name::atom(), {Mod::module(), Fun::atom()}, Opts::options()) -> supervisor:child_spec();
+                (Name::atom(), Mod::module(), Fun::atom()) -> supervisor:child_spec().
+child_spec(Name, Fun, Opts) when is_function(Fun, 1), is_atom(Name), is_map(Opts) ->
+    #{id => Name,
+      start => {ecache_server, start_link, [Name, Fun, maps:merge(?DEFAULT_OPTS, Opts)]},
+      shutdown => brutal_kill};
+child_spec(Name, Fun, Opts) when is_list(Opts) -> child_spec(Name, Fun, maps:from_list(Opts));
+child_spec(Name, {Mod, Fun}, Opts) when is_atom(Mod), is_atom(Fun) -> child_spec(Name, fun Mod:Fun/1, Opts);
 child_spec(Name, Mod, Fun) -> child_spec(Name, Mod, Fun, #{}).
 
 -spec child_spec(Name::atom(), Mod::module(), Fun::atom(), Opts::options()) -> supervisor:child_spec().
