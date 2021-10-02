@@ -23,7 +23,7 @@ M = database,
 F = get_result,
 Size = 16,     % 16 MB cache
 Time = 300000, % 300,000 ms = 300s = 5 minute TTL
-Server = ecache_server:start_link(CacheName, M, F, #{size => Size, time => Time}).
+Server = ecache_server:start_link(CacheName, {M, F}, #{size => Size, time => Time}).
 ```
 
 The TTL is an idle timer.  When an entry is accessed, the TTL for the entry is reset.
@@ -64,9 +64,13 @@ Nobody likes writing supervisor entries by hand, so we provide a supervisor entr
 This is quite useful because many production applications will have 5 to 100 individual cache pools.
 
 ```erlang
-SupervisorWorkerTuple = ecache:child_spec(Name, M, F, #{size => Size}).
+SupervisorWorkerTuple = ecache:child_spec(Name, {M, F}, #{size => Size}).
 ```
+or
 
+```erlang
+SupervisorWorkerTuple = ecache:child_spec(Name, M:F/1, #{size => Size}).
+```
 For more examples, see https://github.com/Ledest/ecache/blob/master/test/ecache_tests.erl
 
 
@@ -102,4 +106,4 @@ TODO
 
 * Cache pools?  Cross-server awareness?
 * Expose per-entry TTL to external setting/updating
-* Expose ETS configuration to make compression and read/write optimizations settable per-cache.
+* Expose ETS configuration to read/write optimizations settable per-cache.
