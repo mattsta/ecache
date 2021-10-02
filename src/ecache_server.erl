@@ -37,9 +37,15 @@ start_link(Name, Fun) -> start_link(Name, Fun, #{}).
 start_link(Name, {Mod, Fun}, Opts) when is_atom(Mod), is_atom(Fun) -> start_link(Name, fun Mod:Fun/1, Opts);
 start_link(Name, Fun, Opts) when is_atom(Name), is_function(Fun, 1), is_map(Opts) ->
     #cache{size = DSize, ttl = DTime, policy = DPolicy} = #cache{},
-    #{size := Size, time := Time, policy := Policy} = maps:merge(#{size => DSize, time => DTime, policy => DPolicy},
-                                                                 Opts),
-    gen_server:start_link({local, Name}, ?MODULE, [Name, Fun, Size, Time, Policy], []);
+    #{size := Size,
+      time := Time,
+      policy := Policy,
+      compressed := Comp} = maps:merge(#{size => DSize,
+                                         time => DTime,
+                                         policy => DPolicy,
+                                         compressed => true},
+                                       Opts),
+    gen_server:start_link({local, Name}, ?MODULE, [Name, Fun, Size, Time, Policy, Comp], []);
 start_link(Name, Fun, Opts) when is_list(Opts) -> start_link(Name, Fun, maps:from_list(Opts));
 % make 8 MB cache
 start_link(Name, Mod, Fun) -> start_link(Name, {Mod, Fun}, #{}).
@@ -67,15 +73,21 @@ start_link(Name, Mod, Fun, Size) -> start_link(Name, {Mod, Fun}, #{size => Size}
 %%% Callback functions from gen_server
 %%%----------------------------------------------------------------------
 
--spec init([atom()|module()|unlimited|pos_integer()|ecache:policy()] | #cache{}) -> {ok, #cache{}}.
-init([Name, Fun, Size, Time, Policy])
+-spec init([atom()|module()|unlimited|pos_integer()|ecache:policy()|boolean()] | #cache{}) -> {ok, #cache{}}.
+init([Name, Fun, Size, Time, Policy, Comp])
   when is_atom(Policy),
        Size =:= unlimited orelse is_integer(Size) andalso Size > 0,
        Time =:= unlimited orelse is_integer(Time) andalso Time > 0 ->
     process_flag(trap_exit, true),
-    Index = ets:new(Name, [set, compressed, public, % public because we spawn writers
-                           {keypos, #datum.key},    % use Key stored in record
-                           {read_concurrency, true}]),
+    TabOpts = [set,
+               public,               % public because we spawn writers
+               {keypos, #datum.key}, % use Key stored in record
+               {read_concurrency, true}],
+    Index = ets:new(Name,
+                    if
+                        Comp -> [compressed|TabOpts];
+                        true -> TabOpts
+                    end),
     init(#cache{name = Name,
                 datum_index = Index,
                 table_pad = ets:info(Index, memory),
