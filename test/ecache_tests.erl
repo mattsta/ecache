@@ -9,7 +9,7 @@ ecache_setup() ->
     % start cache server tc (test cache)
     % 6 MB cache
     % 5 minute TTL per entry (300 seconds)
-    {ok, Pid} = ecache_server:start_link(tc, ?MODULE, tester, #{size => 6, time => 3000}),
+    {ok, Pid} = ecache_server:start_link(tc, {?MODULE, tester}, #{size => 6, time => 3000}),
     Pid.
 
 ecache_cleanup(Cache) -> exit(Cache, normal).
