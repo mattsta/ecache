@@ -11,8 +11,10 @@
 -define(TIMEOUT, infinity).
 
 -type policy() :: mru|actual_time.
--type options() :: #{size => unlimited|pos_integer(), time => unlimited|pos_integer(), policy => policy()} |
-                   [{size, unlimited|pos_integer()}|{time, unlimited|pos_integer()}|{policy , policy()}].
+-type options() :: #{size => unlimited|pos_integer(), time => unlimited|pos_integer(),
+                     policy => policy(), compressed => boolean()} |
+                   [{size, unlimited|pos_integer()}|{time, unlimited|pos_integer()}|
+                    {policy , policy()}|{compressed, boolean()}].
 
 -export_type([policy/0, options/0]).
 
@@ -20,7 +22,7 @@
 %% Supervisory helpers
 %% ===================================================================
 
--define(DEFAULT_OPTS, #{size => unlimited, time => unlimited, policy => actual_time}).
+-define(DEFAULT_OPTS, #{size => unlimited, time => unlimited, policy => actual_time, compressed => false}).
 
 -spec child_spec(Name::atom(), Fun::fun((term()) -> any())|{module(), atom()}) -> supervisor:child_spec().
 child_spec(Name, Fun) -> child_spec(Name, Fun, #{}).
