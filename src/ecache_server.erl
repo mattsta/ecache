@@ -14,7 +14,6 @@
                 reaper :: undefined|pid(),
                 data_accessor :: atom(),
                 size = 8 :: unlimited|non_neg_integer(),
-                pending = #{} :: map(),
                 found = 0 :: non_neg_integer(),
                 launched = 0 :: non_neg_integer(),
                 policy = mru :: ecache:policy(),
