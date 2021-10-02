@@ -2,7 +2,7 @@
 
 -behaviour(gen_server).
 
--export([start_link/3, start_link/4]).
+-export([start_link/2, start_link/3, start_link/4]).
 -export([start_link/5, start_link/6]).
 -deprecated([{start_link, 5, next_major_release}, {start_link, 6, next_major_release}]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
@@ -28,40 +28,50 @@
                 type = mru :: ecache:policy(),
                 remaining_ttl = unlimited:: unlimited|non_neg_integer()}).
 
+-spec start_link(Name::atom(), Fun::fun((term()) -> any())) -> {ok, pid()} | {error, term()}.
+start_link(Name, Fun) -> start_link(Name, Fun, #{}).
+
+-spec start_link(Name::atom(), Fun::fun((term()) -> any()), Opts::ecache:options()) -> {ok, pid()} | {error, term()};
+                (Name::atom(), {Mod::module(), Fun::atom()}, Opts::ecache:options()) -> {ok, pid()} | {error, term()};
+                (Name::atom(), Mod::module(), Fun::atom()) -> {ok, pid()} | {error, term()}.
+start_link(Name, {Mod, Fun}, Opts) when is_atom(Mod), is_atom(Fun) -> start_link(Name, fun Mod:Fun/1, Opts);
+start_link(Name, Fun, Opts) when is_atom(Name), is_function(Fun, 1), is_map(Opts) ->
+    #cache{size = DSize, ttl = DTime, policy = DPolicy} = #cache{},
+    #{size := Size, time := Time, policy := Policy} = maps:merge(#{size => DSize, time => DTime, policy => DPolicy},
+                                                                 Opts),
+    gen_server:start_link({local, Name}, ?MODULE, [Name, Fun, Size, Time, Policy], []);
+start_link(Name, Fun, Opts) when is_list(Opts) -> start_link(Name, Fun, maps:from_list(Opts));
 % make 8 MB cache
--spec start_link(Name::atom(), Mod::module(), Fun::atom()) -> {ok, pid()} | {error, term()}.
-start_link(Name, Mod, Fun) -> start_link(Name, Mod, Fun, #{}).
+start_link(Name, Mod, Fun) -> start_link(Name, {Mod, Fun}, #{}).
 
 % make MRU policy cache
 -spec start_link(Name::atom(), Mod::module(), Fun::atom(),
                  Size::unlimited|pos_integer(), Time::unlimited|pos_integer()) ->
           {ok, pid()} | {error, term()}.
-start_link(Name, Mod, Fun, Size, Time) -> start_link(Name, Mod, Fun, #{size => Size, time => Time}).
+start_link(Name, Mod, Fun, Size, Time) -> start_link(Name, {Mod, Fun}, #{size => Size, time => Time}).
 
 -spec start_link(Name::atom(), Mod::module(), Fun::atom(),
                  Size::unlimited|pos_integer(), Time::unlimited|pos_integer(), Policy::ecache:policy()) ->
           {ok, pid()} | {error, term()}.
 start_link(Name, Mod, Fun, Size, Time, Policy) ->
-    start_link(Name, Mod, Fun, #{size => Size, time => Time, policy => Policy}).
+    start_link(Name, {Mod, Fun}, #{size => Size, time => Time, policy => Policy}).
 
--spec start_link(Name::atom(), Mod::module(), Fun::atom(), Opts::ecache:options()) -> {ok, pid()} | {error, term()}.
-start_link(Name, Mod, Fun, Opts) when is_map(Opts) ->
-    #cache{size = DSize, ttl = DTime, policy = DPolicy} = #cache{},
-    #{size := Size, time := Time, policy := Policy} = maps:merge(#{size => DSize, time => DTime, policy => DPolicy},
-                                                                 Opts),
-    gen_server:start_link({local, Name}, ?MODULE, [Name, fun Mod:Fun/1, Size, Time, Policy], []);
-start_link(Name, Mod, Fun, Opts) when is_list(Opts) -> start_link(Name, Mod, Fun, maps:from_list(Opts));
+-spec start_link(Name::atom(), Mod::module(), Fun::atom(), Opts::ecache:options()) -> {ok, pid()} | {error, term()};
+                (Name::atom(), Mod::module(), Fun::atom(), Size::unlimited|pos_integer()) ->
+          {ok, pid()} | {error, term()}.
+start_link(Name, Mod, Fun, Opts) when is_map(Opts); is_list(Opts) -> start_link(Name, {Mod, Fun}, Opts);
 % make 5 minute expiry cache
-start_link(Name, Mod, Fun, Size) when Size =:= unlimited; is_integer(Size), Size > 0 ->
-    start_link(Name, Mod, Fun, #{size => Size}).
+start_link(Name, Mod, Fun, Size) -> start_link(Name, {Mod, Fun}, #{size => Size}).
 
 %%%----------------------------------------------------------------------
 %%% Callback functions from gen_server
 %%%----------------------------------------------------------------------
 
 -spec init([atom()|module()|unlimited|pos_integer()|ecache:policy()] | #cache{}) -> {ok, #cache{}}.
-init([Name, Fun, Size, Time, Policy]) when is_function(Fun, 1), is_atom(Policy),
-                                           Time =:= unlimited orelse is_integer(Time) andalso Time > 0 ->
+init([Name, Fun, Size, Time, Policy])
+  when is_atom(Policy),
+       Size =:= unlimited orelse is_integer(Size) andalso Size > 0,
+       Time =:= unlimited orelse is_integer(Time) andalso Time > 0 ->
     process_flag(trap_exit, true),
     Index = ets:new(Name, [set, compressed, public, % public because we spawn writers
                            {keypos, #datum.key},    % use Key stored in record
