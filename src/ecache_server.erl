@@ -207,12 +207,15 @@ delete_object(T, #datum{reaper = Reaper} = Datum) ->
     ets:delete_object(T, Datum).
 
 -compile({inline, delete_last_active_object/1}).
+-spec delete_last_active_object(T::ets:tid()) -> boolean().
 delete_last_active_object(T) ->
-    DatumNow = #datum{last_active = timestamp()},
-    LeastActive = ets:foldl(fun(#datum{last_active = LA} = A, #datum{last_active = Acc}) when LA < Acc -> A;
-                               (_, Acc) -> Acc
-                            end, DatumNow, T),
-    LeastActive =:= DatumNow orelse delete_object(T, LeastActive).
+    TS = timestamp(),
+    case ets:foldl(fun(#datum{last_active = LA} = A, #datum{last_active = Acc}) when LA < Acc -> A;
+                      (_, Acc) -> Acc
+                   end, #datum{last_active = TS}, T) of
+        #datum{last_active = TS} -> false;
+        LeastActive -> delete_object(T, LeastActive)
+    end.
 
 -compile({inline, create_datum/4}).
 create_datum(DatumKey, Data, TTL, Type) ->
