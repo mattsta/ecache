@@ -115,11 +115,7 @@ handle_call(empty, _From, #state{table = T} = State) ->
     {reply, ok, State};
 handle_call(reap_oldest, {_, Pid} = From, #state{table = T, reaper = Pid} = State) when is_pid(Pid) ->
     spawn(fun() ->
-              DatumNow = #datum{last_active = timestamp()},
-              LeastActive = ets:foldl(fun(#datum{last_active = LA} = A, #datum{last_active = Acc}) when LA < Acc -> A;
-                                         (_, Acc) -> Acc
-                                      end, DatumNow, T),
-              LeastActive =:= DatumNow orelse delete_object(T, LeastActive),
+              delete_last_active_object(T),
               gen_server:reply(From, cache_bytes(State))
           end),
     {noreply, State};
@@ -205,11 +201,20 @@ delete_datum(T, Key) ->
         _ -> true
     end.
 
+-compile({inline, delete_object/2}).
 delete_object(T, #datum{reaper = Reaper} = Datum) ->
     kill_reaper(Reaper),
     ets:delete_object(T, Datum).
 
--compile({inline, [create_datum/4]}).
+-compile({inline, delete_last_active_object/1}).
+delete_last_active_object(T) ->
+    DatumNow = #datum{last_active = timestamp()},
+    LeastActive = ets:foldl(fun(#datum{last_active = LA} = A, #datum{last_active = Acc}) when LA < Acc -> A;
+                               (_, Acc) -> Acc
+                            end, DatumNow, T),
+    LeastActive =:= DatumNow orelse delete_object(T, LeastActive).
+
+-compile({inline, create_datum/4}).
 create_datum(DatumKey, Data, TTL, Type) ->
     Timestamp = timestamp(),
     #datum{key = DatumKey, data = Data, type = Type,
