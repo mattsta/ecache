@@ -280,10 +280,10 @@ fetch_data(Key, T) when is_tuple(Key) ->
 replace_datum(Key, Data, T) when is_tuple(Key) ->
     ets:update_element(T, Key, [{#datum.data, Data}, {#datum.last_active, timestamp()}]).
 
-get_all_keys(T) -> get_all_keys(T, [ets:first(T)]).
+get_all_keys(T) -> get_all_keys(T, ets:first(T), []).
 
-get_all_keys(_, ['$end_of_table'|Acc]) -> Acc;
-get_all_keys(T, [Key|_] = Acc) -> get_all_keys(T, [ets:next(T, Key)|Acc]).
+get_all_keys(_, '$end_of_table', Acc) -> Acc;
+get_all_keys(T, Key, Acc) -> get_all_keys(T, ets:next(T, Key), [Key|Acc]).
 
 generic_get(UseKey, From, #state{table = T} = State, F, Key) ->
     case fetch_data(UseKey, T) of
