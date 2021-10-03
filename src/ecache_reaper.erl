@@ -12,20 +12,20 @@
 -define(TIMEOUT, 4000).
 
 -spec start(Name::atom(), Size::pos_integer()) -> {ok, pid()} | {error, term()}.
-start(Name, Size) -> gen_server:start(?MODULE, {Name, Size}, []).
+start(Name, Size) -> gen_server:start(?MODULE, #state{name = Name, size = Size}, []).
 
 -spec start_link(Name::atom(), Size::pos_integer()) -> {ok, pid()} | {error, term()}.
-start_link(Name, Size) -> gen_server:start_link(?MODULE, {Name, Size}, []).
+start_link(Name, Size) -> gen_server:start_link(?MODULE, #state{name = Name, size = Size}, []).
 
 -spec start_link(Name::atom()) -> {ok, pid()} | {error, term()}.
-start_link(Name) -> gen_server:start_link(?MODULE, {Name, 8}, []).
+start_link(Name) -> gen_server:start_link(?MODULE, #state{name = Name, size = 8}, []).
 
 %%%----------------------------------------------------------------------
 %%% Callback functions from gen_server
 %%%----------------------------------------------------------------------
 
--spec init({Name::atom(), Size::pos_integer()}) -> {ok, #state{}, ?TIMEOUT}.
-init({Name, Size}) when is_atom(Name), is_integer(Size), Size > 0 -> {ok, #state{name = Name, size = Size}, ?TIMEOUT}.
+-spec init(State) -> {ok, State, ?TIMEOUT} when State::#state{}.
+init(#state{name = Name, size = Size} = State) when is_atom(Name), is_integer(Size), Size > 0 -> {ok, State, ?TIMEOUT}.
 
 -spec handle_call(Arbitrary, {pid(), term()}, State) -> {reply, {arbitrary, Arbitrary}, State, ?TIMEOUT}
         when Arbitrary::term(), State::#state{}.
