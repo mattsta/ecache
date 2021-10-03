@@ -113,7 +113,7 @@ handle_call(empty, _From, #state{table = T} = State) ->
     kill_reapers(T),
     ets:delete_all_objects(T),
     {reply, ok, State};
-handle_call(reap_oldest, From, #state{table = T} = State) ->
+handle_call(reap_oldest, {_, Pid} = From, #state{table = T, reaper = Pid} = State) when is_pid(Pid) ->
     spawn(fun() ->
               DatumNow = #datum{last_active = timestamp()},
               LeastActive = ets:foldl(fun(#datum{last_active = LA} = A, #datum{last_active = Acc}) when LA < Acc -> A;
