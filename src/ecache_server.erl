@@ -95,7 +95,7 @@ init_size(#state{name = Name, size = Size} = State) when is_integer(Size), Size 
     SizeBytes = Size * (1024 * 1024),
     State#state{reaper = start_reaper(Name, SizeBytes), size = SizeBytes}.
 
--spec handle_call(term(), {pid(), term()}, #state{}) -> {reply, term(), #state{}} | {noreply, #state{}}.
+-spec handle_call(term(), {pid(), term()}, State) -> {reply, term(), State} | {noreply, State} when State::#state{}.
 handle_call({get, Key}, From, #state{data_fun = F} = State) -> generic_get(key(Key), From, State, F, Key);
 handle_call({generic_get, M, F, Key}, From, State) -> generic_get(key(M, F, Key), From, State, fun M:F/1, Key);
 handle_call(total_size, _From, #state{} = State) -> {reply, cache_bytes(State), State};
