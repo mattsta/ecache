@@ -175,7 +175,7 @@ terminate(_Reason, _State) -> ok.
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 -compile({inline, [key/1, key/3]}).
--compile({inline, [unkey/1]}).
+-compile({inline, unkey/1}).
 % keys are tagged/boxed so you can't cross-pollute a cache when using
 % memoize mode versus the normal one-key-per-arg mode.
 % Implication: *always* add key(Key) to keys from a user.  Don't pass user
@@ -255,7 +255,7 @@ launch_datum(Key, T, F, TTL, Policy, UseKey) ->
         ?EXCEPTION(How, What, Stacktrace) -> {ecache_datum_error, {{How, What}, ?GET_STACK(Stacktrace)}}
     end.
 
--compile({inline, [ping_reaper/2]}).
+-compile({inline, ping_reaper/2}).
 ping_reaper(Reaper, NewTTL) when is_pid(Reaper) -> Reaper ! {update_ttl, NewTTL};
 ping_reaper(_, _) -> ok.
 
@@ -320,10 +320,10 @@ start_reaper(Name, Size) ->
 
 timestamp() -> erlang:monotonic_time(milli_seconds).
 
+-compile({inline, time_diff/2}).
 time_diff(T2, T1) -> T2 - T1.
--compile({inline, [time_diff/2]}).
 
+-compile({inline, kill_reapers/1}).
 kill_reapers(T) -> lists:foreach(fun kill_reaper/1, ets:select(T, [{#datum{reaper = '$1', _ = '_'}, [], ['$1']}])).
--compile({inline, [kill_reapers/1]}).
 
 kill_reaper(Reaper) -> not is_pid(Reaper) orelse exit(Reaper, kill).
