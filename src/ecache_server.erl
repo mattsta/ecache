@@ -99,11 +99,12 @@ init_size(#state{name = Name, size = Size} = State) when is_integer(Size), Size 
 handle_call({get, Key}, From, #state{data_fun = F} = State) -> generic_get(key(Key), From, State, F, Key);
 handle_call({generic_get, M, F, Key}, From, State) -> generic_get(key(M, F, Key), From, State, fun M:F/1, Key);
 handle_call(total_size, _From, #state{} = State) -> {reply, cache_bytes(State), State};
-handle_call(stats, _From, #state{table = T, found = Found, launched = Launched, policy = Policy, ttl = TTL} = State) ->
+handle_call(stats, _From,
+            #state{table = T, table_pad = TP, found = Found, launched = Launched, policy = Policy, ttl = TTL} = State) ->
     EtsInfo = ets:info(T),
     {reply,
      [{cache_name, proplists:get_value(name, EtsInfo)},
-      {memory_size_bytes, cache_bytes(State, proplists:get_value(memory, EtsInfo))},
+      {memory_size_bytes, cache_bytes(TP, proplists:get_value(memory, EtsInfo))},
       {datum_count, proplists:get_value(size, EtsInfo)},
       {found, Found}, {launched, Launched},
       {policy, Policy}, {ttl, TTL}],
@@ -194,9 +195,9 @@ unkey({ecache_multi, {_, _, _} = MFA}) -> MFA.
 %% Private
 %% ===================================================================
 
-cache_bytes(#state{table = T} = State) -> cache_bytes(State, ets:info(T, memory)).
+cache_bytes(#state{table = T, table_pad = TabPad}) -> cache_bytes(TabPad, ets:info(T, memory)).
 
-cache_bytes(#state{table_pad = TabPad}, Mem) -> (Mem - TabPad) * erlang:system_info(wordsize).
+cache_bytes(TabPad, Mem) -> (Mem - TabPad) * erlang:system_info(wordsize).
 
 delete_datum(T, Key) ->
     case ets:take(T, Key) of
