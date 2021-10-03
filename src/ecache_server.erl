@@ -7,7 +7,7 @@
 -deprecated([{start_link, 5, next_major_release}, {start_link, 6, next_major_release}]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
--record(cache, {name :: atom(),
+-record(state, {name :: atom(),
                 table :: ets:tid(),
                 table_pad = 0 :: non_neg_integer(),
                 data_fun :: undefined|fun((term()) -> any()),
@@ -36,7 +36,7 @@ start_link(Name, Fun) -> start_link(Name, Fun, #{}).
                 (Name::atom(), Mod::module(), Fun::atom()) -> {ok, pid()} | {error, term()}.
 start_link(Name, {Mod, Fun}, Opts) when is_atom(Mod), is_atom(Fun) -> start_link(Name, fun Mod:Fun/1, Opts);
 start_link(Name, Fun, Opts) when is_atom(Name), is_function(Fun, 1), is_map(Opts) ->
-    #cache{size = DSize, ttl = DTime, policy = DPolicy} = #cache{},
+    #state{size = DSize, ttl = DTime, policy = DPolicy} = #state{},
     #{size := Size,
       time := Time,
       policy := Policy,
@@ -46,7 +46,7 @@ start_link(Name, Fun, Opts) when is_atom(Name), is_function(Fun, 1), is_map(Opts
                                          compressed => true},
                                        Opts),
     gen_server:start_link({local, Name}, ?MODULE,
-                          {#cache{name = Name, data_fun = Fun, size = Size, policy = Policy, ttl = Time}, Comp},
+                          {#state{name = Name, data_fun = Fun, size = Size, policy = Policy, ttl = Time}, Comp},
                           []);
 start_link(Name, Fun, Opts) when is_list(Opts) -> start_link(Name, Fun, maps:from_list(Opts));
 % make 8 MB cache
@@ -75,8 +75,8 @@ start_link(Name, Mod, Fun, Size) -> start_link(Name, {Mod, Fun}, #{size => Size}
 %%% Callback functions from gen_server
 %%%----------------------------------------------------------------------
 
--spec init({#cache{}, Comp::boolean()}) -> {ok, #cache{}}.
-init({#cache{name = Name, policy = Policy, ttl = Time} = Cache, Comp})
+-spec init({#state{}, Comp::boolean()}) -> {ok, #state{}}.
+init({#state{name = Name, policy = Policy, ttl = Time} = Cache, Comp})
   when Policy =:= actual_time orelse Policy =:= mru, Time =:= unlimited orelse is_integer(Time) andalso Time > 0 ->
     process_flag(trap_exit, true),
     TabOpts = [set,
@@ -88,18 +88,18 @@ init({#cache{name = Name, policy = Policy, ttl = Time} = Cache, Comp})
                     Comp -> [compressed|TabOpts];
                     true -> TabOpts
                 end),
-    {ok, init_size(Cache#cache{table = T, table_pad = ets:info(T, memory)})}.
+    {ok, init_size(Cache#state{table = T, table_pad = ets:info(T, memory)})}.
 
-init_size(#cache{size = unlimited} = State) -> State;
-init_size(#cache{name = Name, size = Size} = State) when is_integer(Size), Size > 0 ->
+init_size(#state{size = unlimited} = State) -> State;
+init_size(#state{name = Name, size = Size} = State) when is_integer(Size), Size > 0 ->
     SizeBytes = Size * (1024 * 1024),
-    State#cache{reaper = start_reaper(Name, SizeBytes), size = SizeBytes}.
+    State#state{reaper = start_reaper(Name, SizeBytes), size = SizeBytes}.
 
--spec handle_call(term(), {pid(), term()}, #cache{}) -> {reply, term(), #cache{}} | {noreply, #cache{}}.
-handle_call({get, Key}, From, #cache{data_fun = F} = State) -> generic_get(key(Key), From, State, F, Key);
+-spec handle_call(term(), {pid(), term()}, #state{}) -> {reply, term(), #state{}} | {noreply, #state{}}.
+handle_call({get, Key}, From, #state{data_fun = F} = State) -> generic_get(key(Key), From, State, F, Key);
 handle_call({generic_get, M, F, Key}, From, State) -> generic_get(key(M, F, Key), From, State, fun M:F/1, Key);
-handle_call(total_size, _From, #cache{} = State) -> {reply, cache_bytes(State), State};
-handle_call(stats, _From, #cache{table = T, found = Found, launched = Launched, policy = Policy, ttl = TTL} = State) ->
+handle_call(total_size, _From, #state{} = State) -> {reply, cache_bytes(State), State};
+handle_call(stats, _From, #state{table = T, found = Found, launched = Launched, policy = Policy, ttl = TTL} = State) ->
     EtsInfo = ets:info(T),
     {reply,
      [{cache_name, proplists:get_value(name, EtsInfo)},
@@ -108,11 +108,11 @@ handle_call(stats, _From, #cache{table = T, found = Found, launched = Launched, 
       {found, Found}, {launched, Launched},
       {policy, Policy}, {ttl, TTL}],
      State};
-handle_call(empty, _From, #cache{table = T} = State) ->
+handle_call(empty, _From, #state{table = T} = State) ->
     kill_reapers(T),
     ets:delete_all_objects(T),
     {reply, ok, State};
-handle_call(reap_oldest, From, #cache{table = T} = State) ->
+handle_call(reap_oldest, From, #state{table = T} = State) ->
     spawn(fun() ->
               DatumNow = #datum{last_active = timestamp()},
               LeastActive = ets:foldl(fun(#datum{last_active = LA} = A, #datum{last_active = Acc}) when LA < Acc -> A;
@@ -122,7 +122,7 @@ handle_call(reap_oldest, From, #cache{table = T} = State) ->
               gen_server:reply(From, cache_bytes(State))
           end),
     {noreply, State};
-handle_call({rand, Type, Count}, From, #cache{table = T} = State) ->
+handle_call({rand, Type, Count}, From, #state{table = T} = State) ->
     spawn(fun() ->
               AllKeys = get_all_keys(T),
               Length = length(AllKeys),
@@ -144,37 +144,37 @@ handle_call({rand, Type, Count}, From, #cache{table = T} = State) ->
     {noreply, State};
 handle_call(Arbitrary, _From, State) -> {reply, {arbitrary, Arbitrary}, State}.
 
--spec handle_cast(term(), #cache{}) -> {noreply, #cache{}}.
-handle_cast(launched, #cache{launched = Launched} = State) -> {noreply, State#cache{launched = Launched + 1}};
-handle_cast(found, #cache{found = Found} = State) -> {noreply, State#cache{found = Found + 1}};
-handle_cast({dirty, Id, NewData}, #cache{table = T} = State) ->
+-spec handle_cast(term(), #state{}) -> {noreply, #state{}}.
+handle_cast(launched, #state{launched = Launched} = State) -> {noreply, State#state{launched = Launched + 1}};
+handle_cast(found, #state{found = Found} = State) -> {noreply, State#state{found = Found + 1}};
+handle_cast({dirty, Id, NewData}, #state{table = T} = State) ->
     replace_datum(key(Id), NewData, T),
     {noreply, State};
-handle_cast({dirty, Id}, #cache{table = T} = State) ->
+handle_cast({dirty, Id}, #state{table = T} = State) ->
     delete_datum(T, key(Id)),
     {noreply, State};
-handle_cast({generic_dirty, M, F, A}, #cache{table = T} = State) ->
+handle_cast({generic_dirty, M, F, A}, #state{table = T} = State) ->
     delete_datum(T, key(M, F, A)),
     {noreply, State};
 handle_cast(Req, State) ->
     error_logger:warning_msg("Other cast of: ~p~n", [Req]),
     {noreply, State}.
 
--spec handle_info(term(), #cache{}) -> {noreply, #cache{}}.
+-spec handle_info(term(), #state{}) -> {noreply, #state{}}.
 handle_info({destroy, _DatumPid, ok}, State) -> {noreply, State};
-handle_info({'EXIT', Pid, _Reason}, #cache{reaper = Pid, name = Name, size = Size} = State) ->
-    {noreply, State#cache{reaper = start_reaper(Name, Size)}};
+handle_info({'EXIT', Pid, _Reason}, #state{reaper = Pid, name = Name, size = Size} = State) ->
+    {noreply, State#state{reaper = start_reaper(Name, Size)}};
 handle_info({'EXIT', _Pid, _Reason}, State) -> {noreply, State};
 handle_info({'DOWN', _Ref, process, _Pid, _Reason}, State) -> {noreply, State};
 handle_info(Info, State) ->
     error_logger:warning_msg("Other info of: ~p~n", [Info]),
     {noreply, State}.
 
--spec terminate(term(), #cache{}) -> ok.
-terminate(_Reason, #cache{reaper = Pid}) when is_pid(Pid) -> gen_server:stop(Pid);
+-spec terminate(term(), #state{}) -> ok.
+terminate(_Reason, #state{reaper = Pid}) when is_pid(Pid) -> gen_server:stop(Pid);
 terminate(_Reason, _State) -> ok.
 
--spec code_change(term(), State, term()) -> {ok, State} when State::#cache{}.
+-spec code_change(term(), State, term()) -> {ok, State} when State::#state{}.
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 -compile({inline, [key/1, key/3]}).
@@ -194,9 +194,9 @@ unkey({ecache_multi, {_, _, _} = MFA}) -> MFA.
 %% Private
 %% ===================================================================
 
-cache_bytes(#cache{table = T} = State) -> cache_bytes(State, ets:info(T, memory)).
+cache_bytes(#state{table = T} = State) -> cache_bytes(State, ets:info(T, memory)).
 
-cache_bytes(#cache{table_pad = TabPad}, Mem) -> (Mem - TabPad) * erlang:system_info(wordsize).
+cache_bytes(#state{table_pad = TabPad}, Mem) -> (Mem - TabPad) * erlang:system_info(wordsize).
 
 delete_datum(T, Key) ->
     case ets:take(T, Key) of
@@ -285,11 +285,11 @@ get_all_keys(T) -> get_all_keys(T, [ets:first(T)]).
 get_all_keys(_, ['$end_of_table'|Acc]) -> Acc;
 get_all_keys(T, [Key|_] = Acc) -> get_all_keys(T, [ets:next(T, Key)|Acc]).
 
-generic_get(UseKey, From, #cache{table = T} = State, F, Key) ->
+generic_get(UseKey, From, #state{table = T} = State, F, Key) ->
     case fetch_data(UseKey, T) of
-        {ok, _} = R -> {reply, R, State#cache{found = State#cache.found + 1}};
+        {ok, _} = R -> {reply, R, State#state{found = State#state.found + 1}};
         {ecache, notfound} ->
-            #cache{ttl = TTL, policy = Policy} = State,
+            #state{ttl = TTL, policy = Policy} = State,
             P = self(),
             ets:insert_new(T, #datum{key = UseKey,
                                      mgr = spawn(fun() ->
