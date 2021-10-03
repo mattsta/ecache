@@ -106,7 +106,7 @@ handle_call(reap_oldest, From, #cache{datum_index = Index} = State) ->
                                          (_, Acc) -> Acc
                                       end, DatumNow, Index),
               LeastActive =:= DatumNow orelse delete_object(Index, LeastActive),
-              gen_server:reply(From, State)
+              gen_server:reply(From, cache_bytes(State))
           end),
     {noreply, State};
 handle_call({rand, Type, Count}, From, #cache{datum_index = Index} = State) ->
