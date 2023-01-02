@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-20.04
     strategy:
       matrix:
-        version: ["24.1", "23.3", "22.3", "21.3", "20.3", "19.3", "18.3"]
+        version: ["25.2", "25.1", "25.0", "24.3", "24.2", "24.1", "23.3", "22.3", "21.3", "20.3", "19.3", "18.3"]
         rebar: [rebar, rebar3]
     container:
       image: erlang:${{ matrix.version }}
@@ -23,5 +23,7 @@ jobs:
     - uses: actions/checkout@v2
     - name: Compile
       run: ${{ matrix.rebar }} compile
+    - name: XRef
+      run: ${{ matrix.rebar }} xref
     - name: Tests
-      run: ${{ matrix.rebar }} xref && ${{ matrix.rebar }} eunit
+      run: ${{ matrix.rebar }} eunit
